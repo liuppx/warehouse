@@ -18,6 +18,8 @@ const props = defineProps<{
   sharedCanDelete: boolean
   openShareDetail: (mode: 'share' | 'directShare' | 'receivedShare', item: DirectShareItem) => void
   downloadSharedRoot: (item: DirectShareItem) => void
+  getPreviewMode: (item: FileItem) => 'text' | 'pdf' | 'word' | 'image' | null
+  openFilePreview: (item: FileItem) => void
   openSharedEntryDetail: (item: FileItem) => void
   downloadSharedFile: (item: FileItem) => void
   renameSharedItem: (item: FileItem) => void
@@ -29,6 +31,10 @@ const sharedEntryRows = computed<FileItem[]>(() => props.sharedEntries)
 
 function handleMobileCommand(row: FileItem, command: string | number) {
   const action = String(command)
+  if (action === 'preview') {
+    props.openFilePreview(row)
+    return
+  }
   if (action === 'rename') {
     props.renameSharedItem(row)
     return
@@ -36,6 +42,10 @@ function handleMobileCommand(row: FileItem, command: string | number) {
   if (action === 'delete') {
     props.deleteSharedItem(row)
   }
+}
+
+function canPreview(row: FileItem): boolean {
+  return props.sharedCanRead && !row.isDir && !!props.getPreviewMode(row)
 }
 </script>
 
@@ -118,11 +128,14 @@ function handleMobileCommand(row: FileItem, command: string | number) {
         <span class="time-cell">{{ formatTime(row.modified) }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="180" fixed="right">
+    <el-table-column label="操作" width="220" fixed="right">
       <template #default="{ row }">
         <div class="actions" @click.stop>
           <el-tooltip v-if="row.isDir" content="详情" placement="top">
             <el-button type="primary" link :icon="View" @click="openSharedEntryDetail(row)" />
+          </el-tooltip>
+          <el-tooltip v-if="canPreview(row)" content="预览" placement="top">
+            <el-button type="primary" link :icon="View" @click="openFilePreview(row)" />
           </el-tooltip>
           <el-tooltip v-if="!row.isDir && sharedCanRead" content="下载" placement="top">
             <el-button type="primary" link :icon="Download" @click="downloadSharedFile(row)" />
@@ -217,6 +230,7 @@ function handleMobileCommand(row: FileItem, command: string | number) {
               <el-button size="small" circle :icon="MoreFilled" />
               <template #dropdown>
                 <el-dropdown-menu>
+                  <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
                   <el-dropdown-item v-if="sharedCanUpdate" command="rename">重命名</el-dropdown-item>
                   <el-dropdown-item v-if="sharedCanDelete" command="delete">删除</el-dropdown-item>
                 </el-dropdown-menu>

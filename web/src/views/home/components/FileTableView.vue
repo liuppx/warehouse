@@ -8,6 +8,8 @@ const props = defineProps<{
   onRowClick: (...args: any[]) => void
   formatSize: (size: number) => string
   formatTime: (time: string | number) => string
+  getPreviewMode: (item: FileItem) => 'text' | 'pdf' | 'word' | 'image' | null
+  openFilePreview: (item: FileItem) => void
   openDetailDrawer: (mode: 'file' | 'recycle', item: FileItem) => void
   downloadFile: (item: FileItem) => void
   shareFile: (item: FileItem) => void
@@ -16,10 +18,17 @@ const props = defineProps<{
   deleteFile: (item: FileItem) => void
 }>()
 
+function canPreview(row: FileItem): boolean {
+  return !row.isDir && !!props.getPreviewMode(row)
+}
+
 function handleCommand(row: FileItem, command: string) {
   switch (command) {
     case 'detail':
       props.openDetailDrawer('file', row)
+      break
+    case 'preview':
+      props.openFilePreview(row)
       break
     case 'download':
       props.downloadFile(row)
@@ -73,11 +82,14 @@ function handleDropdownCommand(row: FileItem, command: string | number) {
         <span class="time-cell">{{ formatTime(row.modified) }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="240" fixed="right">
+    <el-table-column label="操作" width="280" fixed="right">
       <template #default="{ row }">
         <div class="actions" @click.stop>
           <el-tooltip v-if="row.isDir" content="详情" placement="top">
             <el-button type="primary" link :icon="View" @click="openDetailDrawer('file', row)" />
+          </el-tooltip>
+          <el-tooltip v-if="canPreview(row)" content="预览" placement="top">
+            <el-button type="primary" link :icon="View" @click="openFilePreview(row)" />
           </el-tooltip>
           <el-tooltip v-if="!row.isDir" content="下载" placement="top">
             <el-button type="primary" link :icon="Download" @click="downloadFile(row)" />
@@ -127,6 +139,7 @@ function handleDropdownCommand(row: FileItem, command: string | number) {
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="detail">详情</el-dropdown-item>
+                <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="share">分享</el-dropdown-item>
                 <el-dropdown-item command="shareUser">共享给用户</el-dropdown-item>

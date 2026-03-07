@@ -16,7 +16,7 @@ const props = defineProps<{
   detailSharedEntry: FileItem | null
   sharedCanRead: boolean
   sharedCanUpdate: boolean
-  getPreviewMode: (item: FileItem) => 'text' | 'pdf' | 'word' | null
+  getPreviewMode: (item: FileItem) => 'text' | 'pdf' | 'word' | 'image' | null
   openFilePreview: (item: FileItem) => void
   formatTime: (time: string | number) => string
   formatDeletedTime: (time: string) => string

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, watch, onBeforeUnmount, nextTick, shallowRef, markRaw } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick, shallowRef, markRaw } from 'vue'
 import { renderAsync } from 'docx-preview'
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/legacy/build/pdf.min.mjs'
 
-type PreviewMode = 'text' | 'pdf' | 'word'
+type PreviewMode = 'text' | 'pdf' | 'word' | 'image'
 
 let pdfWorkerReady = false
 
@@ -25,6 +25,10 @@ const props = defineProps<{
   saving: boolean
   dirty: boolean
   readOnly: boolean
+  imagePosition: number
+  imageTotal: number
+  canPrevImage: boolean
+  canNextImage: boolean
 }>()
 
 const emit = defineEmits<{
@@ -33,6 +37,8 @@ const emit = defineEmits<{
   (event: 'request-close', done: () => void): void
   (event: 'save'): void
   (event: 'download'): void
+  (event: 'prev-image'): void
+  (event: 'next-image'): void
 }>()
 
 const dialogModel = computed({
@@ -48,9 +54,33 @@ const contentModel = computed({
 const canSave = computed(() => props.mode === 'text' && !props.readOnly)
 const canDownload = computed(() => props.mode !== 'text')
 const isDocx = computed(() => props.fileName.toLowerCase().endsWith('.docx'))
+const imageUrl = ref('')
+const imageScale = ref(1)
+const imageOffsetX = ref(0)
+const imageOffsetY = ref(0)
+const imageDragging = ref(false)
+const showImageNavigator = computed(() => props.mode === 'image' && props.imageTotal > 1)
+const showImageMeta = computed(() => props.mode === 'image' && !!imageUrl.value)
+const imageScalePercent = computed(() => `${Math.round(imageScale.value * 100)}%`)
+const canResetImageView = computed(() => (
+  props.mode === 'image'
+  && !!imageUrl.value
+  && (
+    Math.abs(imageScale.value - 1) > 0.001
+    || Math.abs(imageOffsetX.value) > 0.5
+    || Math.abs(imageOffsetY.value) > 0.5
+  )
+))
+const imageCursor = computed(() => {
+  if (imageDragging.value) return 'grabbing'
+  if (imageScale.value > 1.05) return 'grab'
+  return 'zoom-in'
+})
 
 const pdfCanvas = ref<HTMLCanvasElement | null>(null)
 const previewFrame = ref<HTMLDivElement | null>(null)
+const imageFrame = ref<HTMLDivElement | null>(null)
+const imageElement = ref<HTMLImageElement | null>(null)
 const wordContainer = ref<HTMLDivElement | null>(null)
 const wordStyleContainer = ref<HTMLDivElement | null>(null)
 const pdfDoc = shallowRef<any>(null)
@@ -58,6 +88,20 @@ const pdfPage = ref(1)
 const pdfPageCount = ref(0)
 const pdfScale = ref(1)
 const lastScrollTop = ref(0)
+const touchStartX = ref(0)
+const touchStartY = ref(0)
+const touchTracking = ref(false)
+const imageTouchMode = ref<'idle' | 'swipe' | 'pan' | 'pinch'>('idle')
+const imagePinchStartDistance = ref(0)
+const imagePinchStartScale = ref(1)
+const imageTouchPanStartX = ref(0)
+const imageTouchPanStartY = ref(0)
+const imageTouchPanOriginX = ref(0)
+const imageTouchPanOriginY = ref(0)
+const imageDragStartX = ref(0)
+const imageDragStartY = ref(0)
+const imageDragOriginX = ref(0)
+const imageDragOriginY = ref(0)
 let renderTask: any = null
 let scrollLock = false
 let pendingScroll: 'next' | 'prev' | null = null
@@ -77,6 +121,89 @@ function resetPdf() {
   lastScrollTop.value = 0
   scrollLock = false
   pendingScroll = null
+}
+
+function revokeImageUrl() {
+  if (!imageUrl.value) return
+  URL.revokeObjectURL(imageUrl.value)
+  imageUrl.value = ''
+}
+
+function clampImageScale(scale: number): number {
+  return Math.min(4, Math.max(0.5, scale))
+}
+
+function resetImageOffset() {
+  stopImageDrag()
+  imageOffsetX.value = 0
+  imageOffsetY.value = 0
+}
+
+function resetImageScale() {
+  imageScale.value = 1
+  resetImageOffset()
+  resetImageTouch()
+}
+
+function getTouchDistance(touches: TouchList): number {
+  if (touches.length < 2) return 0
+  const dx = touches[0].clientX - touches[1].clientX
+  const dy = touches[0].clientY - touches[1].clientY
+  return Math.hypot(dx, dy)
+}
+
+function beginPinchZoom(touches: TouchList) {
+  const distance = getTouchDistance(touches)
+  if (distance <= 0) return
+  imageTouchMode.value = 'pinch'
+  imagePinchStartDistance.value = distance
+  imagePinchStartScale.value = imageScale.value
+  touchTracking.value = false
+}
+
+function beginTouchPan(touch: Touch) {
+  imageTouchMode.value = 'pan'
+  imageTouchPanStartX.value = touch.clientX
+  imageTouchPanStartY.value = touch.clientY
+  imageTouchPanOriginX.value = imageOffsetX.value
+  imageTouchPanOriginY.value = imageOffsetY.value
+  touchTracking.value = false
+}
+
+function stopImageDrag() {
+  if (!imageDragging.value) return
+  imageDragging.value = false
+  if (typeof document !== 'undefined') {
+    document.body.style.removeProperty('cursor')
+    document.body.style.removeProperty('user-select')
+  }
+}
+
+function getImagePanBounds() {
+  const frame = imageFrame.value
+  const image = imageElement.value
+  if (!frame || !image || typeof window === 'undefined') {
+    return { maxX: 0, maxY: 0 }
+  }
+  const style = window.getComputedStyle(frame)
+  const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+  const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+  const availableWidth = Math.max(0, frame.clientWidth - paddingX)
+  const availableHeight = Math.max(0, frame.clientHeight - paddingY)
+  const baseWidth = image.offsetWidth
+  const baseHeight = image.offsetHeight
+  const scaledWidth = baseWidth * imageScale.value
+  const scaledHeight = baseHeight * imageScale.value
+  return {
+    maxX: Math.max(0, (scaledWidth - availableWidth) / 2),
+    maxY: Math.max(0, (scaledHeight - availableHeight) / 2)
+  }
+}
+
+function clampImageOffsets() {
+  const { maxX, maxY } = getImagePanBounds()
+  imageOffsetX.value = maxX > 0 ? Math.min(maxX, Math.max(-maxX, imageOffsetX.value)) : 0
+  imageOffsetY.value = maxY > 0 ? Math.min(maxY, Math.max(-maxY, imageOffsetY.value)) : 0
 }
 
 async function renderPdfPage() {
@@ -150,6 +277,8 @@ watch(
   async ([mode, blob, visible]) => {
     if (!visible) {
       resetPdf()
+      revokeImageUrl()
+      resetImageScale()
       if (wordContainer.value) wordContainer.value.innerHTML = ''
       if (wordStyleContainer.value) wordStyleContainer.value.innerHTML = ''
       return
@@ -167,6 +296,15 @@ watch(
       }
       return
     }
+    if (mode === 'image') {
+      revokeImageUrl()
+      resetImageScale()
+      if (!blob) {
+        return
+      }
+      imageUrl.value = URL.createObjectURL(blob)
+      return
+    }
     if (mode === 'word' && blob && isDocx.value) {
       try {
         await renderWord(blob)
@@ -178,6 +316,8 @@ watch(
       return
     }
     resetPdf()
+    revokeImageUrl()
+    resetImageScale()
     if (wordContainer.value) wordContainer.value.innerHTML = ''
     if (wordStyleContainer.value) wordStyleContainer.value.innerHTML = ''
   }
@@ -189,8 +329,206 @@ watch([pdfScale, pdfPage], async () => {
   }
 })
 
+watch(imageScale, async scale => {
+  if (scale <= 1.001) {
+    resetImageOffset()
+    return
+  }
+  await nextTick()
+  clampImageOffsets()
+})
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName
+  return target.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+}
+
+function handleWindowKeydown(event: KeyboardEvent) {
+  if (!props.modelValue || props.mode !== 'image' || !showImageNavigator.value || props.loading) return
+  if (isEditableTarget(event.target)) return
+  if (event.key === 'ArrowLeft' && props.canPrevImage) {
+    event.preventDefault()
+    emit('prev-image')
+    return
+  }
+  if (event.key === 'ArrowRight' && props.canNextImage) {
+    event.preventDefault()
+    emit('next-image')
+  }
+}
+
+function resetImageTouch() {
+  imageTouchMode.value = 'idle'
+  touchTracking.value = false
+  touchStartX.value = 0
+  touchStartY.value = 0
+  imagePinchStartDistance.value = 0
+  imagePinchStartScale.value = imageScale.value
+  imageTouchPanStartX.value = 0
+  imageTouchPanStartY.value = 0
+  imageTouchPanOriginX.value = 0
+  imageTouchPanOriginY.value = 0
+}
+
+function handleImageTouchStart(event: TouchEvent) {
+  if (props.mode !== 'image' || !imageUrl.value || props.loading) return
+  if (event.touches.length >= 2) {
+    beginPinchZoom(event.touches)
+    return
+  }
+  if (event.touches.length !== 1) {
+    resetImageTouch()
+    return
+  }
+  const touch = event.touches[0]
+  if (imageScale.value > 1.05) {
+    beginTouchPan(touch)
+    return
+  }
+  if (!showImageNavigator.value) {
+    resetImageTouch()
+    return
+  }
+  imageTouchMode.value = 'swipe'
+  touchTracking.value = true
+  touchStartX.value = touch.clientX
+  touchStartY.value = touch.clientY
+}
+
+function handleImageTouchMove(event: TouchEvent) {
+  if (props.mode !== 'image' || !imageUrl.value || props.loading) return
+  if (event.touches.length >= 2) {
+    if (imageTouchMode.value !== 'pinch') {
+      beginPinchZoom(event.touches)
+    }
+    if (imagePinchStartDistance.value <= 0) return
+    if (event.cancelable) event.preventDefault()
+    const distance = getTouchDistance(event.touches)
+    if (distance <= 0) return
+    imageScale.value = clampImageScale(Number((imagePinchStartScale.value * (distance / imagePinchStartDistance.value)).toFixed(3)))
+    clampImageOffsets()
+    return
+  }
+  if (imageTouchMode.value === 'pan' && event.touches.length === 1) {
+    if (event.cancelable) event.preventDefault()
+    const touch = event.touches[0]
+    const { maxX, maxY } = getImagePanBounds()
+    const nextX = imageTouchPanOriginX.value + (touch.clientX - imageTouchPanStartX.value)
+    const nextY = imageTouchPanOriginY.value + (touch.clientY - imageTouchPanStartY.value)
+    imageOffsetX.value = maxX > 0 ? Math.min(maxX, Math.max(-maxX, nextX)) : 0
+    imageOffsetY.value = maxY > 0 ? Math.min(maxY, Math.max(-maxY, nextY)) : 0
+  }
+}
+
+function handleImageTouchEnd(event: TouchEvent) {
+  if (props.mode !== 'image' || !imageUrl.value || props.loading) {
+    resetImageTouch()
+    return
+  }
+  if (imageTouchMode.value === 'pinch' || imageTouchMode.value === 'pan') {
+    if (imageScale.value > 1.05 && event.touches.length === 1) {
+      beginTouchPan(event.touches[0])
+      return
+    }
+    resetImageTouch()
+    return
+  }
+  if (!touchTracking.value || imageTouchMode.value !== 'swipe' || !showImageNavigator.value) {
+    resetImageTouch()
+    return
+  }
+  const touch = event.changedTouches[0]
+  if (!touch) {
+    resetImageTouch()
+    return
+  }
+  const deltaX = touch.clientX - touchStartX.value
+  const deltaY = touch.clientY - touchStartY.value
+  resetImageTouch()
+  if (Math.abs(deltaX) < 48) return
+  if (Math.abs(deltaX) <= Math.abs(deltaY) * 1.2) return
+  if (deltaX > 0 && props.canPrevImage) {
+    emit('prev-image')
+    return
+  }
+  if (deltaX < 0 && props.canNextImage) {
+    emit('next-image')
+  }
+}
+
+function handleImageWheel(event: WheelEvent) {
+  if (props.mode !== 'image' || !imageUrl.value || props.loading) return
+  const delta = Math.sign(event.deltaY)
+  if (!delta) return
+  event.preventDefault()
+  const stepCount = Math.max(1, Math.min(4, Math.round(Math.abs(event.deltaY) / 120)))
+  const step = delta < 0 ? 0.1 : -0.1
+  const nextScale = imageScale.value + step * stepCount
+  imageScale.value = clampImageScale(Number(nextScale.toFixed(2)))
+}
+
+function handleImageDoubleClick() {
+  if (props.mode !== 'image' || !imageUrl.value || props.loading) return
+  imageScale.value = imageScale.value > 1.05 ? 1 : 2
+}
+
+function handleImageMouseDown(event: MouseEvent) {
+  if (props.mode !== 'image' || !imageUrl.value || props.loading) return
+  if (imageScale.value <= 1.05 || event.button !== 0) return
+  event.preventDefault()
+  imageDragging.value = true
+  imageDragStartX.value = event.clientX
+  imageDragStartY.value = event.clientY
+  imageDragOriginX.value = imageOffsetX.value
+  imageDragOriginY.value = imageOffsetY.value
+  if (typeof document !== 'undefined') {
+    document.body.style.cursor = 'grabbing'
+    document.body.style.userSelect = 'none'
+  }
+}
+
+function handleWindowMouseMove(event: MouseEvent) {
+  if (!imageDragging.value) return
+  const { maxX, maxY } = getImagePanBounds()
+  const nextX = imageDragOriginX.value + (event.clientX - imageDragStartX.value)
+  const nextY = imageDragOriginY.value + (event.clientY - imageDragStartY.value)
+  imageOffsetX.value = maxX > 0 ? Math.min(maxX, Math.max(-maxX, nextX)) : 0
+  imageOffsetY.value = maxY > 0 ? Math.min(maxY, Math.max(-maxY, nextY)) : 0
+}
+
+function handleImageLoad() {
+  clampImageOffsets()
+}
+
+function handleResetImageView() {
+  if (props.mode !== 'image' || !imageUrl.value) return
+  resetImageScale()
+}
+
+function handleWindowResize() {
+  clampImageOffsets()
+}
+
+onMounted(() => {
+  if (typeof window === 'undefined') return
+  window.addEventListener('keydown', handleWindowKeydown)
+  window.addEventListener('mousemove', handleWindowMouseMove)
+  window.addEventListener('mouseup', stopImageDrag)
+  window.addEventListener('resize', handleWindowResize)
+})
+
 onBeforeUnmount(() => {
   resetPdf()
+  revokeImageUrl()
+  resetImageScale()
+  stopImageDrag()
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('keydown', handleWindowKeydown)
+    window.removeEventListener('mousemove', handleWindowMouseMove)
+    window.removeEventListener('mouseup', stopImageDrag)
+    window.removeEventListener('resize', handleWindowResize)
+  }
 })
 
 function handleBeforeClose(done: () => void) {
@@ -297,6 +635,36 @@ function handlePdfWheel(event: WheelEvent) {
           </div>
         </template>
       </template>
+      <template v-else-if="mode === 'image'">
+        <div v-if="!imageUrl" class="preview-placeholder">正在加载图片...</div>
+        <div
+          v-else
+          ref="imageFrame"
+          class="preview-frame image-preview-frame"
+          @wheel="handleImageWheel"
+          @dblclick="handleImageDoubleClick"
+          @mousedown="handleImageMouseDown"
+          @touchstart.passive="handleImageTouchStart"
+          @touchmove="handleImageTouchMove"
+          @touchend="handleImageTouchEnd"
+          @touchcancel="resetImageTouch"
+        >
+          <div
+            class="preview-image-stage"
+            :style="{ transform: `translate(${imageOffsetX}px, ${imageOffsetY}px)` }"
+          >
+            <img
+              ref="imageElement"
+              :src="imageUrl"
+              :alt="fileName"
+              class="preview-image"
+              :style="{ transform: `scale(${imageScale})`, cursor: imageCursor }"
+              draggable="false"
+              @load="handleImageLoad"
+            />
+          </div>
+        </div>
+      </template>
       <template v-else>
         <div v-if="isDocx && blob" class="preview-docx" ref="wordContainer"></div>
         <div v-if="isDocx && blob" ref="wordStyleContainer" class="docx-style-container"></div>
@@ -306,19 +674,49 @@ function handlePdfWheel(event: WheelEvent) {
       </template>
     </div>
     <template #footer>
-      <el-button @click="handleCloseClick">关闭</el-button>
-      <el-button v-if="canDownload" @click="$emit('download')">
-        下载
-      </el-button>
-      <el-button
-        v-if="canSave"
-        type="primary"
-        :loading="saving"
-        :disabled="loading || !dirty"
-        @click="$emit('save')"
-      >
-        保存
-      </el-button>
+      <div class="preview-footer">
+        <div v-if="showImageMeta" class="preview-footer-meta">
+          <span class="preview-footer-zoom">{{ imageScalePercent }}</span>
+          <span v-if="showImageNavigator" class="preview-footer-separator">·</span>
+          <span v-if="showImageNavigator" class="preview-footer-count">{{ imagePosition }} / {{ imageTotal }}</span>
+        </div>
+        <div class="preview-footer-actions">
+          <el-button
+            v-if="showImageNavigator"
+            :disabled="loading || !canPrevImage"
+            @click="$emit('prev-image')"
+          >
+            上一张
+          </el-button>
+          <el-button
+            v-if="showImageNavigator"
+            :disabled="loading || !canNextImage"
+            @click="$emit('next-image')"
+          >
+            下一张
+          </el-button>
+          <el-button
+            v-if="showImageMeta"
+            :disabled="loading || !canResetImageView"
+            @click="handleResetImageView"
+          >
+            重置视图
+          </el-button>
+          <el-button @click="handleCloseClick">关闭</el-button>
+          <el-button v-if="canDownload" @click="$emit('download')">
+            下载
+          </el-button>
+          <el-button
+            v-if="canSave"
+            type="primary"
+            :loading="saving"
+            :disabled="loading || !dirty"
+            @click="$emit('save')"
+          >
+            保存
+          </el-button>
+        </div>
+      </div>
     </template>
   </el-dialog>
 </template>
@@ -326,6 +724,44 @@ function handlePdfWheel(event: WheelEvent) {
 <style scoped>
 .preview-body {
   min-height: 380px;
+}
+
+.preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.preview-footer-meta {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.preview-footer-count {
+  font-size: 13px;
+  color: #606266;
+}
+
+.preview-footer-zoom {
+  font-size: 13px;
+  color: #303133;
+}
+
+.preview-footer-separator {
+  margin: 0 8px;
+  color: #c0c4cc;
+}
+
+.preview-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .preview-textarea :deep(.el-textarea__inner) {
@@ -349,6 +785,39 @@ function handlePdfWheel(event: WheelEvent) {
 .preview-frame canvas {
   display: block;
   margin: 0 auto;
+}
+
+.image-preview-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  background:
+    linear-gradient(45deg, #eef2f7 25%, transparent 25%),
+    linear-gradient(-45deg, #eef2f7 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #eef2f7 75%),
+    linear-gradient(-45deg, transparent 75%, #eef2f7 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+}
+
+.preview-image-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: center center;
+}
+
+.preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(60vh - 24px);
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+  transform-origin: center center;
+  transition: transform 120ms ease-out;
+  will-change: transform;
 }
 
 .pdf-toolbar {

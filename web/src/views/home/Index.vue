@@ -127,7 +127,7 @@ const renameMode = ref<'file' | 'shared' | null>(null)
 const renameForm = ref({
   name: ''
 })
-type PreviewMode = 'text' | 'pdf' | 'word'
+type PreviewMode = 'text' | 'pdf' | 'word' | 'image'
 const previewVisible = ref(false)
 const previewMode = ref<PreviewMode | null>(null)
 const previewLoading = ref(false)
@@ -137,6 +137,7 @@ const previewOrigin = ref('')
 const previewTarget = ref<FileItem | null>(null)
 const previewBlob = ref<Blob | null>(null)
 const previewReadOnly = ref(false)
+let previewRequestSeq = 0
 const VIEW_STORAGE_KEY = 'warehouse:lastView'
 const FILE_PATH_STORAGE_KEY = 'warehouse:lastFilePath'
 const SHARED_ACTIVE_STORAGE_KEY = 'warehouse:sharedActiveId'
@@ -519,6 +520,19 @@ const filteredSharedEntries = computed(() => {
   if (!token) return sharedEntries.value
   return sharedEntries.value.filter(item => item.name.toLowerCase().includes(token))
 })
+const previewImageItems = computed(() => {
+  const items = isSharedBrowse.value ? sharedEntries.value : fileList.value
+  return items.filter(item => isImagePreviewItem(item))
+})
+const previewImageIndex = computed(() => {
+  if (previewMode.value !== 'image' || !previewTarget.value) return -1
+  return previewImageItems.value.findIndex(item => item.path === previewTarget.value?.path)
+})
+const previewImageTotal = computed(() => previewImageItems.value.length)
+const canPreviewPreviousImage = computed(() => previewImageIndex.value > 0)
+const canPreviewNextImage = computed(
+  () => previewImageIndex.value >= 0 && previewImageIndex.value < previewImageItems.value.length - 1
+)
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 const TEXT_EXTENSIONS = new Set([
   'txt', 'md', 'markdown', 'json', 'jsonl', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env',
@@ -532,6 +546,7 @@ const TEXT_FILENAMES = new Set([
 ])
 const PDF_EXTENSIONS = new Set(['pdf'])
 const WORD_EXTENSIONS = new Set(['docx'])
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico'])
 
 function getFileExtension(name: string): string {
   if (!name) return ''
@@ -555,7 +570,12 @@ function getPreviewMode(item?: FileItem | null): PreviewMode | null {
   const ext = getFileExtension(item.name || '')
   if (ext && PDF_EXTENSIONS.has(ext)) return 'pdf'
   if (ext && WORD_EXTENSIONS.has(ext)) return 'word'
+  if (ext && IMAGE_EXTENSIONS.has(ext)) return 'image'
   return null
+}
+
+function isImagePreviewItem(item?: FileItem | null): boolean {
+  return getPreviewMode(item) === 'image'
 }
 
 function encodePath(path: string): string {
@@ -1114,6 +1134,7 @@ async function openFilePreview(item: FileItem) {
     showError('暂不支持预览该类型文件')
     return
   }
+  const requestSeq = ++previewRequestSeq
   detailDrawerVisible.value = false
   previewTarget.value = item
   previewMode.value = mode
@@ -1144,9 +1165,10 @@ async function openFilePreview(item: FileItem) {
         throw new Error(`读取失败: ${response.status}`)
       }
       const text = await response.text()
+      if (requestSeq !== previewRequestSeq) return
       previewContent.value = text
       previewOrigin.value = text
-    } else if (mode === 'pdf' || mode === 'word') {
+    } else if (mode === 'pdf' || mode === 'word' || mode === 'image') {
       const response = await fetch(
         isSharedBrowse.value && sharedActive.value
           ? buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
@@ -1164,19 +1186,23 @@ async function openFilePreview(item: FileItem) {
       if (!response.ok) {
         throw new Error(`读取失败: ${response.status}`)
       }
+      if (requestSeq !== previewRequestSeq) return
       previewBlob.value = await response.blob()
     }
   } catch (error: any) {
+    if (requestSeq !== previewRequestSeq) return
     console.error('预览文件失败:', error)
     showError(error?.message || '预览失败')
     previewVisible.value = false
     resetPreview()
   } finally {
+    if (requestSeq !== previewRequestSeq) return
     previewLoading.value = false
   }
 }
 
 function resetPreview() {
+  previewRequestSeq += 1
   previewTarget.value = null
   previewMode.value = null
   previewContent.value = ''
@@ -1256,6 +1282,16 @@ async function savePreview() {
 function downloadPreview() {
   if (!previewTarget.value) return
   downloadFile(previewTarget.value)
+}
+
+function previewAdjacentImage(direction: 'prev' | 'next') {
+  if (previewMode.value !== 'image') return
+  const currentIndex = previewImageIndex.value
+  if (currentIndex < 0) return
+  const offset = direction === 'next' ? 1 : -1
+  const target = previewImageItems.value[currentIndex + offset]
+  if (!target) return
+  openFilePreview(target)
 }
 
 function handleRowClick(row: FileItem | RecycleItem | ShareItem | DirectShareItem) {
@@ -3696,6 +3732,8 @@ onBeforeUnmount(() => {
               :shared-can-delete="sharedCanDelete"
               :open-share-detail="openShareDetail"
               :download-shared-root="downloadSharedRoot"
+              :get-preview-mode="getPreviewMode"
+              :open-file-preview="openFilePreview"
               :open-shared-entry-detail="openSharedEntryDetail"
               :download-shared-file="downloadSharedFile"
               :rename-shared-item="renameSharedItem"
@@ -3708,6 +3746,8 @@ onBeforeUnmount(() => {
               :on-row-click="handleRowClick"
               :format-size="formatSize"
               :format-time="formatTime"
+              :get-preview-mode="getPreviewMode"
+              :open-file-preview="openFilePreview"
               :open-detail-drawer="openDetailDrawer"
               :download-file="downloadFile"
               :share-file="shareFile"
@@ -3782,9 +3822,15 @@ onBeforeUnmount(() => {
         :saving="previewSaving"
         :dirty="previewDirty"
         :read-only="previewReadOnly"
+        :image-position="previewImageIndex + 1"
+        :image-total="previewImageTotal"
+        :can-prev-image="canPreviewPreviousImage"
+        :can-next-image="canPreviewNextImage"
         @request-close="handlePreviewBeforeClose"
         @save="savePreview"
         @download="downloadPreview"
+        @prev-image="previewAdjacentImage('prev')"
+        @next-image="previewAdjacentImage('next')"
       />
 
       <nav class="mobile-only mobile-bottom-nav">
