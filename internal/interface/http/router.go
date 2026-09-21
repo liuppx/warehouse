@@ -22,6 +22,7 @@ type Router struct {
 	emailAuthHandler           *handler.EmailAuthHandler
 	assetsHandler              *handler.AssetsHandler
 	assetObjectHandler         *handler.AssetObjectHandler
+	assetToolHandler           *handler.AssetToolHandler
 	webdavHandler              *handler.WebDAVHandler
 	quotaHandler               *handler.QuotaHandler
 	userHandler                *handler.UserHandler
@@ -48,6 +49,7 @@ func NewRouter(
 	emailAuthHandler *handler.EmailAuthHandler,
 	assetsHandler *handler.AssetsHandler,
 	assetObjectHandler *handler.AssetObjectHandler,
+	assetToolHandler *handler.AssetToolHandler,
 	webdavHandler *handler.WebDAVHandler,
 	quotaHandler *handler.QuotaHandler,
 	userHandler *handler.UserHandler,
@@ -72,6 +74,7 @@ func NewRouter(
 		emailAuthHandler:           emailAuthHandler,
 		assetsHandler:              assetsHandler,
 		assetObjectHandler:         assetObjectHandler,
+		assetToolHandler:           assetToolHandler,
 		webdavHandler:              webdavHandler,
 		quotaHandler:               quotaHandler,
 		userHandler:                userHandler,
@@ -130,6 +133,10 @@ func (r *Router) Setup() http.Handler {
 		mux.Handle("/api/v1/public/assets/object", r.createAuthenticatedHandler(http.HandlerFunc(r.assetObjectHandler.HandleObject)))
 		mux.Handle("/api/v1/public/assets/object/content", r.createAuthenticatedHandler(http.HandlerFunc(r.assetObjectHandler.HandleObjectContent)))
 		mux.Handle("/api/v1/public/assets/objects", r.createAuthenticatedHandler(http.HandlerFunc(r.assetObjectHandler.HandleObjects)))
+	}
+	if r.assetToolHandler != nil {
+		mux.Handle("/api/v1/public/tools/warehouse", r.createAuthenticatedHandler(http.HandlerFunc(r.assetToolHandler.HandleCatalog)))
+		mux.Handle("/api/v1/public/tools/warehouse/call", r.createAuthenticatedHandler(http.HandlerFunc(r.assetToolHandler.HandleCall)))
 	}
 	mux.Handle("/api/v1/public/webdav/quota", r.createAuthenticatedHandler(http.HandlerFunc(r.quotaHandler.GetUserQuota)))
 	mux.Handle("/api/v1/public/webdav/user/info", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.GetUserInfo)))

@@ -237,6 +237,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/public/tools/warehouse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出 Warehouse 当前提供的 Tool 定义
+         * @description 返回 Warehouse 当前 HTTP Tool 适配层支持的 Tool 定义。当前只暴露 P0 只读资产 Tool，
+         *     不代表 Warehouse 已经提供独立 MCP Server。
+         */
+        get: operations["listWarehouseTools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/tools/warehouse/call": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 调用 Warehouse 只读 Tool
+         * @description 通过稳定 Tool 名称调用 Warehouse 资产只读能力。该适配层复用 Warehouse 现有认证、
+         *     UCAN app scope、路径规范化和对象服务，不实现第二套权限判断。
+         */
+        post: operations["callWarehouseTool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/webdav/quota": {
         parameters: {
             query?: never;
@@ -1614,6 +1656,65 @@ export interface components {
             code: string;
             message: string;
         };
+        AssetToolError: {
+            code: string;
+            message: string;
+            requestId?: string;
+        };
+        AssetToolCatalog: {
+            tools: components["schemas"]["AssetToolDefinition"][];
+        };
+        AssetToolDefinition: {
+            /** @enum {string} */
+            name: "warehouse.space.list" | "warehouse.object.list" | "warehouse.object.stat" | "warehouse.object.read";
+            version: string;
+            description: string;
+            inputSchema: {
+                [key: string]: unknown;
+            };
+            outputSchema: {
+                [key: string]: unknown;
+            };
+            requiredScopes: string[];
+            /** @enum {string} */
+            sideEffects: "none";
+            /** @enum {string} */
+            idempotency: "safe";
+            /** @constant */
+            confirmationRequired: false;
+            sourceApi: {
+                method: string;
+                path: string;
+            };
+        };
+        AssetToolCallRequest: {
+            /** @enum {string} */
+            name: "warehouse.space.list" | "warehouse.object.list" | "warehouse.object.stat" | "warehouse.object.read";
+            arguments?: {
+                [key: string]: unknown;
+            };
+            traceId?: string;
+        };
+        AssetToolCallResponse: {
+            /** @enum {string} */
+            name: "warehouse.space.list" | "warehouse.object.list" | "warehouse.object.stat" | "warehouse.object.read";
+            result: components["schemas"]["AssetToolSpaceListResult"] | components["schemas"]["AssetObjectList"] | components["schemas"]["AssetObject"] | components["schemas"]["AssetToolObjectReadResult"];
+            requestId?: string;
+            traceId?: string;
+        };
+        AssetToolSpaceListResult: {
+            defaultSpace: string;
+            spaces: components["schemas"]["AssetSpace"][];
+        };
+        AssetToolObjectReadResult: {
+            metadata: components["schemas"]["AssetObject"];
+            /** @enum {string} */
+            mode: "head" | "content";
+            /** @enum {string} */
+            encoding?: "utf-8" | "base64";
+            content?: string;
+            truncated: boolean;
+        };
         Quota: {
             /** Format: int64 */
             quota: number;
@@ -2056,6 +2157,15 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["AssetObjectError"];
+            };
+        };
+        /** @description Warehouse Tool 调用错误 */
+        AssetToolError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["AssetToolError"];
             };
         };
         /** @description 操作成功 */
@@ -2534,6 +2644,56 @@ export interface operations {
             400: components["responses"]["AssetObjectError"];
             401: components["responses"]["AssetObjectError"];
             403: components["responses"]["AssetObjectError"];
+        };
+    };
+    listWarehouseTools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tool 定义列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetToolCatalog"];
+                };
+            };
+            401: components["responses"]["AssetToolError"];
+        };
+    };
+    callWarehouseTool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetToolCallRequest"];
+            };
+        };
+        responses: {
+            /** @description Tool 调用成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetToolCallResponse"];
+                };
+            };
+            400: components["responses"]["AssetToolError"];
+            401: components["responses"]["AssetToolError"];
+            403: components["responses"]["AssetToolError"];
+            404: components["responses"]["AssetToolError"];
+            413: components["responses"]["AssetToolError"];
         };
     };
     getCurrentUserQuota: {

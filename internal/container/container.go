@@ -91,6 +91,7 @@ type Container struct {
 	EmailAuthHandler           *handler.EmailAuthHandler
 	AssetsHandler              *handler.AssetsHandler
 	AssetObjectHandler         *handler.AssetObjectHandler
+	AssetToolHandler           *handler.AssetToolHandler
 	WebDAVHandler              *handler.WebDAVHandler
 	QuotaHandler               *handler.QuotaHandler
 	UserHandler                *handler.UserHandler
@@ -531,6 +532,7 @@ func (c *Container) initHandlers() error {
 
 	c.AssetsHandler = handler.NewAssetsHandler(c.AssetSpaceManager, c.Logger)
 	c.AssetObjectHandler = handler.NewAssetObjectHandler(c.Config, c.ObjectService, c.Logger)
+	c.AssetToolHandler = handler.NewAssetToolHandler(c.Config, c.AssetSpaceManager, c.ObjectService, c.Logger)
 
 	// WebDAV 处理器
 	c.WebDAVHandler = handler.NewWebDAVHandler(
@@ -600,6 +602,7 @@ func (c *Container) initHTTP() error {
 		c.EmailAuthHandler,
 		c.AssetsHandler,
 		c.AssetObjectHandler,
+		c.AssetToolHandler,
 		c.WebDAVHandler,
 		c.QuotaHandler,
 		c.UserHandler,

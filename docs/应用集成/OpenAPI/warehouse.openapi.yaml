@@ -42,6 +42,8 @@ tags:
     description: 按钱包、分组或全体用户的定向分享
   - name: Upload sessions
     description: 可恢复分片上传会话
+  - name: Warehouse tools
+    description: 面向模型客户端和 Agent 的 Warehouse 只读 Tool 适配入口
 
 paths:
   /api/v1/public/health/heartbeat:
@@ -396,6 +398,58 @@ paths:
         "400": {$ref: "#/components/responses/AssetObjectError"}
         "401": {$ref: "#/components/responses/AssetObjectError"}
         "403": {$ref: "#/components/responses/AssetObjectError"}
+  /api/v1/public/tools/warehouse:
+    get:
+      tags: [Warehouse tools]
+      operationId: listWarehouseTools
+      summary: 列出 Warehouse 当前提供的 Tool 定义
+      description: |
+        返回 Warehouse 当前 HTTP Tool 适配层支持的 Tool 定义。当前只暴露 P0 只读资产 Tool，
+        不代表 Warehouse 已经提供独立 MCP Server。
+      responses:
+        "200":
+          description: Tool 定义列表
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AssetToolCatalog"}
+        "401": {$ref: "#/components/responses/AssetToolError"}
+  /api/v1/public/tools/warehouse/call:
+    post:
+      tags: [Warehouse tools]
+      operationId: callWarehouseTool
+      summary: 调用 Warehouse 只读 Tool
+      description: |
+        通过稳定 Tool 名称调用 Warehouse 资产只读能力。该适配层复用 Warehouse 现有认证、
+        UCAN app scope、路径规范化和对象服务，不实现第二套权限判断。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AssetToolCallRequest"}
+            examples:
+              stat:
+                value:
+                  name: warehouse.object.stat
+                  arguments:
+                    path: /services/knowledge/artifacts/report.md
+              read:
+                value:
+                  name: warehouse.object.read
+                  arguments:
+                    path: /personal/docs/source.md
+                    mode: content
+                    maxBytes: 1048576
+      responses:
+        "200":
+          description: Tool 调用成功
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AssetToolCallResponse"}
+        "400": {$ref: "#/components/responses/AssetToolError"}
+        "401": {$ref: "#/components/responses/AssetToolError"}
+        "403": {$ref: "#/components/responses/AssetToolError"}
+        "404": {$ref: "#/components/responses/AssetToolError"}
+        "413": {$ref: "#/components/responses/AssetToolError"}
   /api/v1/public/webdav/quota:
     get:
       tags: [User]
@@ -1749,6 +1803,11 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/AssetObjectError"}
+    AssetToolError:
+      description: Warehouse Tool 调用错误
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/AssetToolError"}
     MessageResponse:
       description: 操作成功
       content:
@@ -1965,6 +2024,99 @@ components:
       properties:
         code: {type: string}
         message: {type: string}
+    AssetToolError:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        requestId: {type: string}
+    AssetToolCatalog:
+      type: object
+      required: [tools]
+      properties:
+        tools:
+          type: array
+          items: {$ref: "#/components/schemas/AssetToolDefinition"}
+    AssetToolDefinition:
+      type: object
+      required: [name, version, description, inputSchema, outputSchema, requiredScopes, sideEffects, idempotency, confirmationRequired, sourceApi]
+      properties:
+        name:
+          type: string
+          enum:
+            - warehouse.space.list
+            - warehouse.object.list
+            - warehouse.object.stat
+            - warehouse.object.read
+        version: {type: string}
+        description: {type: string}
+        inputSchema: {type: object, additionalProperties: true}
+        outputSchema: {type: object, additionalProperties: true}
+        requiredScopes:
+          type: array
+          items: {type: string}
+        sideEffects: {type: string, enum: [none]}
+        idempotency: {type: string, enum: [safe]}
+        confirmationRequired: {type: boolean, const: false}
+        sourceApi:
+          type: object
+          required: [method, path]
+          properties:
+            method: {type: string}
+            path: {type: string}
+    AssetToolCallRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          enum:
+            - warehouse.space.list
+            - warehouse.object.list
+            - warehouse.object.stat
+            - warehouse.object.read
+        arguments:
+          type: object
+          additionalProperties: true
+        traceId: {type: string}
+      additionalProperties: false
+    AssetToolCallResponse:
+      type: object
+      required: [name, result]
+      properties:
+        name:
+          type: string
+          enum:
+            - warehouse.space.list
+            - warehouse.object.list
+            - warehouse.object.stat
+            - warehouse.object.read
+        result:
+          oneOf:
+            - $ref: "#/components/schemas/AssetToolSpaceListResult"
+            - $ref: "#/components/schemas/AssetObjectList"
+            - $ref: "#/components/schemas/AssetObject"
+            - $ref: "#/components/schemas/AssetToolObjectReadResult"
+        requestId: {type: string}
+        traceId: {type: string}
+    AssetToolSpaceListResult:
+      type: object
+      required: [defaultSpace, spaces]
+      properties:
+        defaultSpace: {type: string}
+        spaces:
+          type: array
+          items: {$ref: "#/components/schemas/AssetSpace"}
+    AssetToolObjectReadResult:
+      type: object
+      required: [metadata, mode, truncated]
+      properties:
+        metadata: {$ref: "#/components/schemas/AssetObject"}
+        mode: {type: string, enum: [head, content]}
+        encoding: {type: string, enum: [utf-8, base64]}
+        content: {type: string}
+        truncated: {type: boolean}
     Quota:
       type: object
       required: [quota, used, available, percentage, unlimited]

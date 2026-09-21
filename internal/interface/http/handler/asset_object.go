@@ -12,7 +12,6 @@ import (
 	"os"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/auth"
@@ -249,17 +248,7 @@ func (h *AssetObjectHandler) writeObjectHeaders(w http.ResponseWriter, info serv
 }
 
 func (h *AssetObjectHandler) objectResponse(info service.ObjectInfo, checksum string) assetObjectResponse {
-	return assetObjectResponse{
-		Path:           "/" + info.Bucket + "/" + strings.TrimPrefix(info.Key, "/"),
-		Bucket:         info.Bucket,
-		Key:            info.Key,
-		Size:           info.Size,
-		ETag:           info.ETag,
-		ChecksumSHA256: checksum,
-		ContentType:    info.ContentType,
-		ModifiedAt:     info.ModifiedAt.UTC().Format(time.RFC3339),
-		IsPrefix:       info.IsPrefix,
-	}
+	return assetObjectResponseForInfo(info, checksum)
 }
 
 func (h *AssetObjectHandler) currentUser(w http.ResponseWriter, r *http.Request) (*user.User, bool) {
