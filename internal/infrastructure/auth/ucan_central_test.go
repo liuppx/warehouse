@@ -92,7 +92,7 @@ func buildProoflessCentralToken(t *testing.T, audience string, capabilities []Uc
 }
 
 func TestUcanVerifierTrustedIssuerAllowsProoflessCentralToken(t *testing.T) {
-	audience := "did:web:127.0.0.1:6065"
+	audience := "did:web:localhost:6065"
 	token, issuer := buildProoflessCentralToken(t, audience, []UcanCapability{
 		{With: "app:all:localhost-3020", Can: "write"},
 	})
@@ -114,7 +114,7 @@ func TestUcanVerifierTrustedIssuerAllowsProoflessCentralToken(t *testing.T) {
 }
 
 func TestUcanVerifierWithoutTrustedIssuerRejectsProoflessCentralToken(t *testing.T) {
-	audience := "did:web:127.0.0.1:6065"
+	audience := "did:web:localhost:6065"
 	token, _ := buildProoflessCentralToken(t, audience, []UcanCapability{
 		{With: "app:all:localhost-3020", Can: "write"},
 	})

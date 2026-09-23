@@ -96,7 +96,7 @@ web3:
   auto_create_on_ucan: true
   ucan:
     enabled: true
-    audience: "did:web:127.0.0.1:6065"
+    audience: "did:web:localhost:6065"
     # 推荐：使用 required_capabilities（with/can）声明必需能力；支持多个条目
     required_capabilities:
       - with: "app:*"

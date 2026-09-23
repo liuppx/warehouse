@@ -208,10 +208,10 @@ if [[ -z "${BASE_URL}" ]]; then
   SERVER_ADDRESS="$(config_server_value address 2>/dev/null || true)"
   SERVER_PORT="$(config_server_value port 2>/dev/null || true)"
   SERVER_TLS="$(config_server_value tls 2>/dev/null || true)"
-  [[ -n "${SERVER_ADDRESS}" ]] || SERVER_ADDRESS="127.0.0.1"
+  [[ -n "${SERVER_ADDRESS}" ]] || SERVER_ADDRESS="localhost"
   [[ -n "${SERVER_PORT}" ]] || SERVER_PORT="6065"
   case "${SERVER_ADDRESS}" in
-    0.0.0.0|::|"[::]") SERVER_ADDRESS="127.0.0.1" ;;
+    0.0.0.0|::|"[::]") SERVER_ADDRESS="localhost" ;;
   esac
   SCHEME="http"
   [[ "${SERVER_TLS}" == "true" ]] && SCHEME="https"

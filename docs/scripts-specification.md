@@ -67,7 +67,7 @@ bash scripts/copy-for-upgrade.sh <target-dir>
 ```bash
 bash scripts/health-check.sh --level readiness
 bash scripts/health-check.sh --level all --format json
-bash scripts/health-check.sh --base-url http://127.0.0.1:6065 --timeout 10
+bash scripts/health-check.sh --base-url http://localhost:6065 --timeout 10
 ```
 
 主要参数：
@@ -222,7 +222,7 @@ bash scripts/starter.sh restart
 
 ```bash
 bash scripts/test.sh --suite unit
-bash scripts/test.sh --suite smoke --base-url http://127.0.0.1:6065
+bash scripts/test.sh --suite smoke --base-url http://localhost:6065
 bash scripts/test.sh --suite all --format junit --output test-report.xml
 ```
 

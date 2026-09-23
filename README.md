@@ -126,8 +126,8 @@ go build -o build/warehouse ./cmd/warehouse
 健康检查：
 
 ```bash
-curl http://127.0.0.1:6065/api/v1/public/health/heartbeat
-curl http://127.0.0.1:6065/api/v1/public/health/readiness
+curl http://localhost:6065/api/v1/public/health/heartbeat
+curl http://localhost:6065/api/v1/public/health/readiness
 ```
 
 正式安装包由 `scripts/starter.sh` 启动后，使用统一健康检查脚本：
@@ -163,9 +163,9 @@ CLI readiness 检查：
 
 ```bash
 # 将 <username>:<password> 替换成你本地实际可用的账号
-curl -X MKCOL -u <username>:<password> http://127.0.0.1:6065/dav/demo
-echo "hello" | curl -X PUT -u <username>:<password> --data-binary @- http://127.0.0.1:6065/dav/demo/hello.txt
-curl -u <username>:<password> http://127.0.0.1:6065/dav/demo/hello.txt
+curl -X MKCOL -u <username>:<password> http://localhost:6065/dav/demo
+echo "hello" | curl -X PUT -u <username>:<password> --data-binary @- http://localhost:6065/dav/demo/hello.txt
+curl -u <username>:<password> http://localhost:6065/dav/demo/hello.txt
 ```
 
 ## 配置说明

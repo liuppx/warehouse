@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_URL="http://127.0.0.1:6065"
+BASE_URL="http://localhost:6065"
 WALLET_ADDRESS="0x21b3eE0D9540D5fe07bCBeE7C056CA35FFFdcaEC"
 
 echo "==================================="
@@ -63,4 +63,3 @@ if [ -n "$SIGNATURE" ]; then
     echo "Failed to get token"
   fi
 fi
-
