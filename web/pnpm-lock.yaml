@@ -15,8 +15,8 @@ importers:
         specifier: ^13.1.0
         version: 13.9.0(vue@3.5.42(typescript@5.6.3))
       '@yeying-community/web3-bs':
-        specifier: ^1.0.26
-        version: 1.0.26(ethers@6.17.0)
+        specifier: ^1.0.27
+        version: 1.0.27(ethers@6.17.0)
       buffer:
         specifier: ^6.0.3
         version: 6.0.3
@@ -806,8 +806,8 @@ packages:
     peerDependencies:
       vue: ^3.5.0
 
-  '@yeying-community/web3-bs@1.0.26':
-    resolution: {integrity: sha512-pPWBb3F3QcYfKYTxyj2ES+gQQlxhU3CXIOFpaEJHRpFvhBVldVTdL+Vg4ooQ4NvcFvPmbCzK7o5j3IdQ6lutWw==}
+  '@yeying-community/web3-bs@1.0.27':
+    resolution: {integrity: sha512-Bwj74TpB0POYKwQh69RwAK5DH9SOZVNfvro8BQJQF6BiI+Ou93QHgydfF0ppdtBDh13F/5IVFNV2rDMQHjwzgA==}
 
   acorn@8.18.0:
     resolution: {integrity: sha512-lGq+9yr1/GuAWaVYIHRjvvySG5/4VfKIvC8EWxStPdcDh/Ka7FG3twP6v4d5BkravUilhIAsG4Qj83t02LWUPQ==}
@@ -2214,7 +2214,7 @@ snapshots:
     dependencies:
       vue: 3.5.42(typescript@5.6.3)
 
-  '@yeying-community/web3-bs@1.0.26(ethers@6.17.0)':
+  '@yeying-community/web3-bs@1.0.27(ethers@6.17.0)':
     dependencies:
       buffer: 6.0.3
       siwe: 3.0.0(ethers@6.17.0)
