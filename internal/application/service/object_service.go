@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"hash/crc32"
@@ -41,9 +42,16 @@ type ObjectWriteOptions struct {
 	ExpectedMD5    string
 	ExpectedSHA256 string
 	ExpectedCRC32  string
+	ExpectedETag   string
+	CreateOnly     bool
 	ETag           string
 	ContentType    string
 }
+
+var (
+	ErrObjectAlreadyExists      = errors.New("object already exists")
+	ErrObjectPreconditionFailed = errors.New("object precondition failed")
+)
 
 type ObjectMetadata struct {
 	ETag        string
@@ -135,10 +143,31 @@ func (s *ObjectService) putForUserWithOptions(ctx context.Context, owner *user.U
 	unlock := s.lockPath(fullPath)
 	defer unlock()
 	var oldSize int64
-	if info, statErr := os.Stat(fullPath); statErr == nil && !info.IsDir() {
-		oldSize = info.Size()
+	if stat, statErr := os.Stat(fullPath); statErr == nil && !stat.IsDir() {
+		oldSize = stat.Size()
+		if options.CreateOnly {
+			matches, matchErr := fileMatchesSHA256(fullPath, options.ExpectedSHA256)
+			if matchErr != nil {
+				return ObjectInfo{}, matchErr
+			}
+			if matches {
+				return s.statObject(ctx, owner.Directory, bucket, key, fullPath, nil)
+			}
+			return ObjectInfo{}, ErrObjectAlreadyExists
+		}
+		if expected := normalizeETag(options.ExpectedETag); expected != "" {
+			current, infoErr := s.statObject(ctx, owner.Directory, bucket, key, fullPath, nil)
+			if infoErr != nil {
+				return ObjectInfo{}, infoErr
+			}
+			if normalizeETag(current.ETag) != expected {
+				return ObjectInfo{}, ErrObjectPreconditionFailed
+			}
+		}
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return ObjectInfo{}, statErr
+	} else if normalizeETag(options.ExpectedETag) != "" {
+		return ObjectInfo{}, ErrObjectPreconditionFailed
 	}
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return ObjectInfo{}, err
@@ -210,7 +239,28 @@ func (s *ObjectService) putForUserWithOptions(ctx context.Context, owner *user.U
 	if err := s.upsertMetadata(ctx, owner.Directory, bucket, key, metadata); err != nil {
 		return ObjectInfo{}, err
 	}
-	return s.statObject(ctx, owner.Directory, bucket, key, fullPath, nil)
+	return s.statObject(ctx, owner.Directory, bucket, key, fullPath, map[string]ObjectMetadata{key: metadata})
+}
+
+func normalizeETag(value string) string {
+	return strings.Trim(strings.TrimSpace(value), `"`)
+}
+
+func fileMatchesSHA256(fullPath, expected string) (bool, error) {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return false, nil
+	}
+	file, err := os.Open(fullPath)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, file); err != nil {
+		return false, err
+	}
+	return base64.StdEncoding.EncodeToString(h.Sum(nil)) == expected, nil
 }
 
 func validateChecksum(expectedMD5 string, md5Hash hash.Hash, expectedSHA256 string, sha256Hash hash.Hash, expectedCRC32 string, crc32Hash hash.Hash) error {

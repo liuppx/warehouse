@@ -246,7 +246,7 @@ export interface paths {
         };
         /**
          * 列出 Warehouse 当前提供的 Tool 定义
-         * @description 返回 Warehouse 当前 HTTP Tool 适配层支持的 Tool 定义。当前只暴露 P0 只读资产 Tool，
+         * @description 返回 Warehouse 当前 HTTP Tool 适配层支持的 Tool 定义，包括 P0 只读能力和受授权约束的小对象写入能力，
          *     不代表 Warehouse 已经提供独立 MCP Server。
          */
         get: operations["listWarehouseTools"];
@@ -268,11 +268,86 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 调用 Warehouse 只读 Tool
-         * @description 通过稳定 Tool 名称调用 Warehouse 资产只读能力。该适配层复用 Warehouse 现有认证、
+         * 调用 Warehouse 资产 Tool
+         * @description 通过稳定 Tool 名称调用 Warehouse 资产能力。该适配层复用 Warehouse 现有认证、
          *     UCAN app scope、路径规范化和对象服务，不实现第二套权限判断。
          */
         post: operations["callWarehouseTool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/tools/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列出当前用户的 Warehouse Tool 凭证 */
+        get: operations["listWarehouseToolCredentials"];
+        put?: never;
+        /**
+         * 创建 Warehouse Tool 凭证
+         * @description secret 只在本次响应返回一次；该接口仅接受用户登录 JWT。
+         */
+        post: operations["createWarehouseToolCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/tools/credentials/{id}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 轮换 Warehouse Tool 凭证
+         * @description 旧 secret 立即失效，新 secret 只在本次响应返回一次。
+         */
+        post: operations["rotateWarehouseToolCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/tools/credentials/{id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 撤销 Warehouse Tool 凭证 */
+        post: operations["revokeWarehouseToolCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/tools/audits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查询当前用户的 Tool 凭证审计 */
+        get: operations["listWarehouseToolAudits"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1661,12 +1736,62 @@ export interface components {
             message: string;
             requestId?: string;
         };
+        WarehouseToolCredential: {
+            id: string;
+            name: string;
+            scopes: ("asset:read" | "asset:write")[];
+            pathPrefixes: string[];
+            /** @enum {string} */
+            status: "active" | "revoked";
+            /** Format: date-time */
+            expiresAt: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            lastUsedAt?: string | null;
+        };
+        WarehouseToolCredentialList: {
+            items: components["schemas"]["WarehouseToolCredential"][];
+        };
+        WarehouseToolCredentialCreateRequest: {
+            name: string;
+            scopes: ("asset:read" | "asset:write")[];
+            pathPrefixes: string[];
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        WarehouseToolCredentialCreated: components["schemas"]["WarehouseToolCredential"] & {
+            secret: string;
+            warning?: string;
+        };
+        WarehouseToolCredentialRotated: {
+            id: string;
+            secret: string;
+            /** Format: date-time */
+            expiresAt: string;
+            warning?: string;
+        };
+        WarehouseToolAudit: {
+            id: string;
+            credentialId: string;
+            toolName?: string;
+            action: string;
+            path?: string;
+            outcome: string;
+            requestId?: string;
+            traceId?: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        WarehouseToolAuditList: {
+            items: components["schemas"]["WarehouseToolAudit"][];
+        };
         AssetToolCatalog: {
             tools: components["schemas"]["AssetToolDefinition"][];
         };
         AssetToolDefinition: {
             /** @enum {string} */
-            name: "warehouse.space.list" | "warehouse.object.list" | "warehouse.object.stat" | "warehouse.object.read";
+            name: "warehouse.space.list" | "warehouse.object.list" | "warehouse.object.stat" | "warehouse.object.read" | "warehouse.object.put";
             version: string;
             description: string;
             inputSchema: {
@@ -1677,9 +1802,9 @@ export interface components {
             };
             requiredScopes: string[];
             /** @enum {string} */
-            sideEffects: "none";
+            sideEffects: "none" | "write";
             /** @enum {string} */
-            idempotency: "safe";
+            idempotency: "safe" | "idempotent";
             /** @constant */
             confirmationRequired: false;
             sourceApi: {
@@ -1689,7 +1814,7 @@ export interface components {
         };
         AssetToolCallRequest: {
             /** @enum {string} */
-            name: "warehouse.space.list" | "warehouse.object.list" | "warehouse.object.stat" | "warehouse.object.read";
+            name: "warehouse.space.list" | "warehouse.object.list" | "warehouse.object.stat" | "warehouse.object.read" | "warehouse.object.put";
             arguments?: {
                 [key: string]: unknown;
             };
@@ -2693,7 +2818,132 @@ export interface operations {
             401: components["responses"]["AssetToolError"];
             403: components["responses"]["AssetToolError"];
             404: components["responses"]["AssetToolError"];
+            409: components["responses"]["AssetToolError"];
+            412: components["responses"]["AssetToolError"];
             413: components["responses"]["AssetToolError"];
+        };
+    };
+    listWarehouseToolCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 凭证列表，不包含 secret */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseToolCredentialList"];
+                };
+            };
+            401: components["responses"]["AssetToolError"];
+        };
+    };
+    createWarehouseToolCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WarehouseToolCredentialCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description 凭证和一次性 secret */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseToolCredentialCreated"];
+                };
+            };
+            400: components["responses"]["AssetToolError"];
+            401: components["responses"]["AssetToolError"];
+        };
+    };
+    rotateWarehouseToolCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: date-time */
+                    expiresAt?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 新的一次性 secret */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseToolCredentialRotated"];
+                };
+            };
+            401: components["responses"]["AssetToolError"];
+            404: components["responses"]["AssetToolError"];
+        };
+    };
+    revokeWarehouseToolCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 撤销成功 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AssetToolError"];
+            404: components["responses"]["AssetToolError"];
+        };
+    };
+    listWarehouseToolAudits: {
+        parameters: {
+            query?: {
+                credentialId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 审计事件，不包含 secret 或对象正文 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseToolAuditList"];
+                };
+            };
+            401: components["responses"]["AssetToolError"];
         };
     };
     getCurrentUserQuota: {

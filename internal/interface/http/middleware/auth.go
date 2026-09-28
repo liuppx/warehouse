@@ -71,6 +71,13 @@ func (m *AuthMiddleware) Handle(next http.Handler) http.Handler {
 		if enricher, ok := authenticator.(auth.ContextEnricher); ok {
 			ctx = enricher.EnrichContext(ctx, credentials)
 		}
+		if _, ok := GetToolCredentialContext(ctx); ok {
+			allowedToolPath := r.URL.Path == "/api/v1/public/tools/warehouse" || r.URL.Path == "/api/v1/public/tools/warehouse/call"
+			if !allowedToolPath {
+				http.Error(w, "Tool credential is only allowed for asset Tool paths", http.StatusForbidden)
+				return
+			}
+		}
 
 		// 将用户信息放入上下文
 		ctx = context.WithValue(ctx, UserContextKey, u)

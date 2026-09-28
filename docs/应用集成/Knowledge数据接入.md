@@ -4,7 +4,7 @@
 
 本文只描述 Warehouse 侧的数据面能力，不定义 Agent Run、Context Manifest、Service Principal、Artifact Provenance 的业务模型。这些上层语义由 Knowledge 维护。
 
-Knowledge、Chat、Agent 或第三方 AI 应用应通过稳定的 Warehouse 接口接入，而不是持有用户长期主密码或无限范围存储密钥。当前可用接口为 HTTP 对象 API、WebDAV、S3 和 P0 HTTP Tool 适配入口；后续如提供 MCP 适配层，也必须复用相同的路径范围、权限、配额、checksum 和审计边界。第一批资产 Tool 契约见 [资产 Tool 契约](./资产Tool契约.md)。
+Knowledge、Chat、Agent 或第三方 AI 应用应通过稳定的 Warehouse 接口接入，而不是持有用户长期主密码或无限范围存储密钥。当前可用接口为 HTTP 对象 API、WebDAV、S3 和 HTTP Tool 适配入口；Tool 已覆盖 P0 只读能力和受授权约束的小对象写入。后续如提供 MCP 适配层，也必须复用相同的路径范围、权限、配额、checksum 和审计边界。资产 Tool 契约见 [资产 Tool 契约](./资产Tool契约.md)。
 
 ## 1. 目标
 

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,15 +11,19 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/yeying-community/warehouse/internal/application/assetspace"
 	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/auth"
+	"github.com/yeying-community/warehouse/internal/domain/toolcredential"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/infrastructure/repository"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
@@ -27,12 +33,15 @@ const (
 	assetToolObjectList = "warehouse.object.list"
 	assetToolObjectStat = "warehouse.object.stat"
 	assetToolObjectRead = "warehouse.object.read"
+	assetToolObjectPut  = "warehouse.object.put"
 
 	defaultToolReadMaxBytes int64 = 1 << 20
 	maxToolReadMaxBytes     int64 = 5 << 20
+	maxToolWriteMaxBytes    int64 = 5 << 20
+	maxToolCallRequestBytes int64 = 8 << 20
 )
 
-// AssetToolHandler exposes the read-only Warehouse asset Tool adapter.
+// AssetToolHandler exposes the Warehouse asset Tool adapter.
 // It maps stable Tool names to existing Warehouse API semantics without
 // introducing an MCP server or a second authorization layer.
 type AssetToolHandler struct {
@@ -40,6 +49,11 @@ type AssetToolHandler struct {
 	assetSpaceManager *assetspace.Manager
 	objects           *service.ObjectService
 	logger            *zap.Logger
+	auditRepo         repository.ToolCredentialRepository
+}
+
+func (h *AssetToolHandler) SetToolCredentialAuditRepository(repo repository.ToolCredentialRepository) {
+	h.auditRepo = repo
 }
 
 type assetToolDefinition struct {
@@ -93,6 +107,16 @@ type assetToolObjectReadArgs struct {
 	MaxBytes int64  `json:"maxBytes,omitempty"`
 }
 
+type assetToolObjectPutArgs struct {
+	Path           string `json:"path"`
+	Content        string `json:"content"`
+	Encoding       string `json:"encoding,omitempty"`
+	ContentType    string `json:"contentType,omitempty"`
+	ChecksumSHA256 string `json:"checksumSha256,omitempty"`
+	Overwrite      bool   `json:"overwrite,omitempty"`
+	IfMatch        string `json:"ifMatch,omitempty"`
+}
+
 type assetToolObjectReadResult struct {
 	Metadata  assetObjectResponse `json:"metadata"`
 	Mode      string              `json:"mode"`
@@ -135,13 +159,24 @@ func (h *AssetToolHandler) HandleCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req assetToolCallRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxToolCallRequestBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			h.writeError(w, r, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", "tool call request is too large")
+			return
+		}
 		h.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		h.writeError(w, r, http.StatusBadRequest, "INVALID_TOOL", "tool name is required")
+		return
+	}
+	if err := authorizeToolCredential(r, req.Name, req.Arguments); err != nil {
+		h.recordToolAudit(r, req.Name, req.Arguments, "denied", "")
+		h.writeError(w, r, http.StatusForbidden, "TOOL_CREDENTIAL_SCOPE_DENIED", err.Error())
 		return
 	}
 
@@ -171,6 +206,12 @@ func (h *AssetToolHandler) HandleCall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result = value
+	case assetToolObjectPut:
+		value, ok := h.callObjectPut(w, r, u, req.Arguments, req.TraceID)
+		if !ok {
+			return
+		}
+		result = value
 	default:
 		h.writeError(w, r, http.StatusNotFound, "UNKNOWN_TOOL", "unknown warehouse tool")
 		return
@@ -182,6 +223,165 @@ func (h *AssetToolHandler) HandleCall(w http.ResponseWriter, r *http.Request) {
 		RequestID: middleware.RequestID(r.Context()),
 		TraceID:   firstNonEmptyAssetToolValue(strings.TrimSpace(req.TraceID), strings.TrimSpace(r.Header.Get("X-Trace-ID"))),
 	})
+	h.recordToolAudit(r, req.Name, req.Arguments, "success", middleware.RequestID(r.Context()))
+}
+
+func (h *AssetToolHandler) recordToolAudit(r *http.Request, name string, raw json.RawMessage, outcome, requestID string) {
+	credential, ok := middleware.GetToolCredentialContext(r.Context())
+	if !ok || h.auditRepo == nil {
+		return
+	}
+	u, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		return
+	}
+	var args struct {
+		Path   string `json:"path"`
+		Prefix string `json:"prefix"`
+	}
+	_ = json.Unmarshal(raw, &args)
+	target := args.Path
+	if name == assetToolObjectList {
+		target = args.Prefix
+	}
+	_ = h.auditRepo.RecordAudit(r.Context(), &toolcredential.AuditEvent{ID: "wta_" + uuid.NewString(), CredentialID: credential.CredentialID, OwnerUserID: u.ID, ToolName: name, Action: name, Path: target, Outcome: outcome, RequestID: requestID, TraceID: strings.TrimSpace(r.Header.Get("X-Trace-ID")), CreatedAt: time.Now()})
+}
+
+func authorizeToolCredential(r *http.Request, name string, raw json.RawMessage) error {
+	credential, ok := middleware.GetToolCredentialContext(r.Context())
+	if !ok {
+		return nil
+	}
+	scope := "asset:read"
+	if name == assetToolObjectPut {
+		scope = "asset:write"
+	}
+	allowedScope := false
+	for _, item := range credential.Scopes {
+		if item == scope {
+			allowedScope = true
+			break
+		}
+	}
+	if !allowedScope {
+		return errors.New("tool credential does not grant the requested asset scope")
+	}
+	if name == assetToolSpaceList {
+		return nil
+	}
+	var value struct {
+		Path   string `json:"path"`
+		Prefix string `json:"prefix"`
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return errors.New("invalid tool arguments")
+	}
+	target := value.Path
+	if name == assetToolObjectList {
+		target = value.Prefix
+	}
+	if target == "" {
+		return errors.New("path or prefix is required")
+	}
+	clean := path.Clean("/" + strings.TrimLeft(strings.ReplaceAll(target, "\\", "/"), "/"))
+	for _, prefix := range credential.PathPrefixes {
+		prefix = path.Clean("/" + strings.TrimLeft(prefix, "/"))
+		if clean == prefix || strings.HasPrefix(clean, strings.TrimSuffix(prefix, "/")+"/") {
+			return nil
+		}
+	}
+	return errors.New("tool credential is not authorized for this path")
+}
+
+func (h *AssetToolHandler) callObjectPut(w http.ResponseWriter, r *http.Request, u *user.User, raw json.RawMessage, traceID string) (assetObjectResponse, bool) {
+	var args assetToolObjectPutArgs
+	if !h.decodeArguments(w, r, raw, &args) {
+		return assetObjectResponse{}, false
+	}
+	ref, err := parseAssetPath(args.Path, false)
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "INVALID_PATH", err.Error())
+		return assetObjectResponse{}, false
+	}
+	if err := service.EnforceAppScope(r.Context(), h.config, ref.Path, "write", "create", "update"); err != nil {
+		h.writeScopeError(w, r, err)
+		return assetObjectResponse{}, false
+	}
+	encoding := strings.ToLower(strings.TrimSpace(args.Encoding))
+	if encoding == "" {
+		encoding = "utf-8"
+	}
+	var content []byte
+	switch encoding {
+	case "utf-8":
+		if !utf8.ValidString(args.Content) {
+			h.writeError(w, r, http.StatusBadRequest, "INVALID_CONTENT", "content is not valid UTF-8")
+			return assetObjectResponse{}, false
+		}
+		content = []byte(args.Content)
+	case "base64":
+		content, err = base64.StdEncoding.DecodeString(args.Content)
+		if err != nil {
+			h.writeError(w, r, http.StatusBadRequest, "INVALID_CONTENT", "content is not valid base64")
+			return assetObjectResponse{}, false
+		}
+	default:
+		h.writeError(w, r, http.StatusBadRequest, "INVALID_ENCODING", "encoding must be utf-8 or base64")
+		return assetObjectResponse{}, false
+	}
+	if int64(len(content)) > maxToolWriteMaxBytes {
+		h.writeError(w, r, http.StatusRequestEntityTooLarge, "CONTENT_TOO_LARGE", fmt.Sprintf("object content exceeds tool write limit %d", maxToolWriteMaxBytes))
+		return assetObjectResponse{}, false
+	}
+	expectedSHA256, err := normalizeExpectedSHA256(args.ChecksumSHA256)
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "INVALID_CHECKSUM", err.Error())
+		return assetObjectResponse{}, false
+	}
+	if expectedSHA256 == "" {
+		digest := sha256.Sum256(content)
+		expectedSHA256 = base64.StdEncoding.EncodeToString(digest[:])
+	}
+	if strings.TrimSpace(args.IfMatch) != "" && !args.Overwrite {
+		h.writeError(w, r, http.StatusBadRequest, "INVALID_PRECONDITION", "ifMatch requires overwrite=true")
+		return assetObjectResponse{}, false
+	}
+	contentType := strings.TrimSpace(args.ContentType)
+	if contentType == "" {
+		contentType = http.DetectContentType(content)
+	}
+	info, err := h.objects.PutForUserWithOptions(r.Context(), u, ref.Bucket, ref.Key, bytes.NewReader(content), service.ObjectWriteOptions{
+		ExpectedSHA256: expectedSHA256,
+		ExpectedETag:   args.IfMatch,
+		CreateOnly:     !args.Overwrite,
+		ContentType:    contentType,
+	})
+	if err != nil {
+		h.writeObjectError(w, r, err)
+		return assetObjectResponse{}, false
+	}
+	file, _, err := h.objects.Open(r.Context(), u.Directory, ref.Bucket, ref.Key)
+	if err != nil {
+		h.writeObjectError(w, r, err)
+		return assetObjectResponse{}, false
+	}
+	checksum, err := sha256Hex(file)
+	_ = file.Close()
+	if err != nil {
+		h.writeObjectError(w, r, err)
+		return assetObjectResponse{}, false
+	}
+	if h.logger != nil {
+		h.logger.Info("warehouse asset tool wrote object",
+			zap.String("request_id", middleware.RequestID(r.Context())),
+			zap.String("trace_id", firstNonEmptyAssetToolValue(strings.TrimSpace(traceID), strings.TrimSpace(r.Header.Get("X-Trace-ID")))),
+			zap.String("user_id", u.ID),
+			zap.String("path", ref.Path),
+			zap.Int64("size", info.Size),
+			zap.String("checksum_sha256", checksum),
+			zap.Bool("overwrite", args.Overwrite))
+	}
+	return assetObjectResponseForInfo(info, checksum), true
 }
 
 func (h *AssetToolHandler) callSpaceList(w http.ResponseWriter, r *http.Request, u *user.User) (assetToolSpaceListResult, bool) {
@@ -395,6 +595,10 @@ func (h *AssetToolHandler) writeObjectError(w http.ResponseWriter, r *http.Reque
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		h.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "not found")
+	case errors.Is(err, service.ErrObjectAlreadyExists):
+		h.writeError(w, r, http.StatusConflict, "OBJECT_EXISTS", "object already exists with different content")
+	case errors.Is(err, service.ErrObjectPreconditionFailed):
+		h.writeError(w, r, http.StatusPreconditionFailed, "PRECONDITION_FAILED", "object ETag does not match ifMatch")
 	case errors.Is(err, user.ErrQuotaExceeded):
 		h.writeError(w, r, http.StatusRequestEntityTooLarge, "QUOTA_EXCEEDED", "storage quota exceeded")
 	default:
@@ -566,6 +770,26 @@ func assetToolDefinitions() []assetToolDefinition {
 			Idempotency:          "safe",
 			ConfirmationRequired: false,
 			SourceAPI:            assetToolAPI{Method: "GET/HEAD", Path: "/api/v1/public/assets/object/content"},
+		},
+		{
+			Name:        assetToolObjectPut,
+			Version:     "1.0",
+			Description: "将 UTF-8 或 base64 内容写入调用身份有权访问的 Warehouse 对象路径。",
+			InputSchema: map[string]any{"type": "object", "required": []string{"path", "content"}, "properties": map[string]any{
+				"path":           assetPathSchema,
+				"content":        map[string]any{"type": "string"},
+				"encoding":       map[string]any{"type": "string", "enum": []string{"utf-8", "base64"}, "default": "utf-8"},
+				"contentType":    map[string]any{"type": "string"},
+				"checksumSha256": map[string]any{"type": "string"},
+				"overwrite":      map[string]any{"type": "boolean", "default": false},
+				"ifMatch":        map[string]any{"type": "string"},
+			}, "additionalProperties": false},
+			OutputSchema:         objectSchema,
+			RequiredScopes:       []string{"asset:write"},
+			SideEffects:          "write",
+			Idempotency:          "idempotent",
+			ConfirmationRequired: false,
+			SourceAPI:            assetToolAPI{Method: http.MethodPut, Path: "/api/v1/public/assets/object/content"},
 		},
 	}
 }

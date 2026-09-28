@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +13,47 @@ import (
 
 	"github.com/yeying-community/warehouse/internal/domain/user"
 )
+
+func TestObjectServiceConditionalPut(t *testing.T) {
+	root := t.TempDir()
+	svc := NewObjectService(root)
+	ctx := context.Background()
+	owner := &user.User{ID: "u1", Username: "alice", Directory: "alice"}
+
+	initial, err := svc.Put(ctx, owner.Directory, "personal", "review.md", strings.NewReader("initial"))
+	if err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	digest := sha256.Sum256([]byte("initial"))
+	expectedSHA := base64.StdEncoding.EncodeToString(digest[:])
+	retry, err := svc.PutForUserWithOptions(ctx, owner, "personal", "review.md", strings.NewReader("initial"), ObjectWriteOptions{
+		ExpectedSHA256: expectedSHA,
+		CreateOnly:     true,
+	})
+	if err != nil || retry.ETag != initial.ETag {
+		t.Fatalf("idempotent create retry: info=%+v err=%v", retry, err)
+	}
+
+	_, err = svc.PutForUserWithOptions(ctx, owner, "personal", "review.md", strings.NewReader("different"), ObjectWriteOptions{
+		CreateOnly: true,
+	})
+	if !errors.Is(err, ErrObjectAlreadyExists) {
+		t.Fatalf("expected object exists, got %v", err)
+	}
+
+	_, err = svc.PutForUserWithOptions(ctx, owner, "personal", "review.md", strings.NewReader("updated"), ObjectWriteOptions{
+		ExpectedETag: initial.ETag,
+	})
+	if err != nil {
+		t.Fatalf("conditional overwrite: %v", err)
+	}
+	_, err = svc.PutForUserWithOptions(ctx, owner, "personal", "review.md", strings.NewReader("stale"), ObjectWriteOptions{
+		ExpectedETag: initial.ETag,
+	})
+	if !errors.Is(err, ErrObjectPreconditionFailed) {
+		t.Fatalf("expected precondition failure, got %v", err)
+	}
+}
 
 func TestObjectServicePutListOpenDelete(t *testing.T) {
 	root := t.TempDir()

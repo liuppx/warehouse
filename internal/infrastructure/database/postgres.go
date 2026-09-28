@@ -141,6 +141,33 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
+
+		// HTTP Tool scoped credentials; secret is stored only as a password hash.
+		`CREATE TABLE IF NOT EXISTS warehouse_tool_credentials (
+			id VARCHAR(50) PRIMARY KEY,
+			owner_user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name VARCHAR(255) NOT NULL,
+			secret_hash TEXT NOT NULL,
+			scopes TEXT[] NOT NULL,
+			path_prefixes TEXT[] NOT NULL,
+			status VARCHAR(20) NOT NULL DEFAULT 'active',
+			expires_at TIMESTAMP NOT NULL,
+			last_used_at TIMESTAMP NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS warehouse_tool_credential_audits (
+			id VARCHAR(50) PRIMARY KEY,
+			credential_id VARCHAR(50) NOT NULL REFERENCES warehouse_tool_credentials(id) ON DELETE CASCADE,
+			owner_user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			tool_name VARCHAR(120) NOT NULL DEFAULT '',
+			action VARCHAR(40) NOT NULL,
+			path TEXT NOT NULL DEFAULT '',
+			outcome VARCHAR(40) NOT NULL,
+			request_id VARCHAR(100) NOT NULL DEFAULT '',
+			trace_id VARCHAR(100) NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
 		`ALTER TABLE IF EXISTS s3_credentials ADD COLUMN IF NOT EXISTS root_path TEXT NOT NULL DEFAULT '/'`,
 		`ALTER TABLE IF EXISTS s3_credentials ADD COLUMN IF NOT EXISTS permissions VARCHAR(40) NOT NULL DEFAULT 'read'`,
 
@@ -583,6 +610,12 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			ON s3_multipart_uploads(status, expires_at)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_s3_credentials_owner_name
 			ON s3_credentials(owner_user_id, name)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouse_tool_credentials_owner_name
+			ON warehouse_tool_credentials(owner_user_id, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_warehouse_tool_credentials_secret_status
+			ON warehouse_tool_credentials(status, expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_warehouse_tool_credential_audits_owner_created
+			ON warehouse_tool_credential_audits(owner_user_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_webdav_access_key_bindings_key
 			ON webdav_access_key_bindings(access_key_id, root_path)`,
 		`CREATE INDEX IF NOT EXISTS idx_webdav_access_key_bindings_owner

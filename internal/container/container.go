@@ -43,6 +43,7 @@ type Container struct {
 	GroupRepository               repository.GroupRepository
 	WebDAVAccessKeyRepo           repository.WebDAVAccessKeyRepository
 	S3CredentialRepo              repository.S3CredentialRepository
+	ToolCredentialRepo            repository.ToolCredentialRepository
 	S3MultipartRepo               repository.S3MultipartRepository
 	S3ObjectMetadataRepo          repository.S3ObjectMetadataRepository
 	NotificationRepo              repository.NotificationRepository
@@ -78,6 +79,7 @@ type Container struct {
 	AccessKeyAuth        *infraAuth.AccessKeyAuthenticator
 	BasicAuth            *infraAuth.BasicAuthenticator
 	Web3Auth             *infraAuth.Web3Authenticator
+	ToolCredentialAuth   *infraAuth.ToolCredentialAuthenticator
 	S3SecretBox          *infraCrypto.SecretBox
 	MultipartService     *service.MultipartService
 	S3CredentialResolver s3.CredentialResolver
@@ -104,6 +106,7 @@ type Container struct {
 	NotificationHandler        *handler.NotificationHandler
 	S3CredentialHandler        *handler.S3CredentialHandler
 	UploadSessionHandler       *handler.UploadSessionHandler
+	ToolCredentialHandler      *handler.ToolCredentialHandler
 
 	// HTTP
 	Router   *http.Router
@@ -277,6 +280,7 @@ func (c *Container) initRepositories() error {
 	c.GroupRepository = repository.NewPostgresGroupRepository(c.DB.DB)
 	// WebDAV 访问密钥仓储
 	c.WebDAVAccessKeyRepo = repository.NewPostgresWebDAVAccessKeyRepository(c.DB.DB)
+	c.ToolCredentialRepo = repository.NewPostgresToolCredentialRepository(c.DB.DB)
 	c.S3MultipartRepo = repository.NewPostgresS3MultipartRepository(c.DB.DB)
 	c.S3ObjectMetadataRepo = repository.NewPostgresS3ObjectMetadataRepository(c.DB.DB)
 	if c.Config.S3.Enabled {
@@ -415,6 +419,8 @@ func (c *Container) initAuthenticators() error {
 		c.Logger,
 	)
 	c.Authenticators = append(c.Authenticators, c.AccessKeyAuth)
+	c.ToolCredentialAuth = infraAuth.NewToolCredentialAuthenticator(c.UserRepository, c.ToolCredentialRepo, c.Logger)
+	c.Authenticators = append(c.Authenticators, c.ToolCredentialAuth)
 
 	// Basic 认证器
 	c.BasicAuth = infraAuth.NewBasicAuthenticator(
@@ -533,6 +539,7 @@ func (c *Container) initHandlers() error {
 	c.AssetsHandler = handler.NewAssetsHandler(c.AssetSpaceManager, c.Logger)
 	c.AssetObjectHandler = handler.NewAssetObjectHandler(c.Config, c.ObjectService, c.Logger)
 	c.AssetToolHandler = handler.NewAssetToolHandler(c.Config, c.AssetSpaceManager, c.ObjectService, c.Logger)
+	c.AssetToolHandler.SetToolCredentialAuditRepository(c.ToolCredentialRepo)
 
 	// WebDAV 处理器
 	c.WebDAVHandler = handler.NewWebDAVHandler(
@@ -583,6 +590,7 @@ func (c *Container) initHandlers() error {
 		c.S3CredentialHandler = handler.NewS3CredentialHandler(c.S3CredentialRepo, c.Logger)
 	}
 	c.UploadSessionHandler = handler.NewUploadSessionHandler(c.UploadSessionService, c.Logger)
+	c.ToolCredentialHandler = handler.NewToolCredentialHandler(c.ToolCredentialRepo, c.Logger)
 
 	c.Logger.Info("handlers initialized")
 
@@ -615,6 +623,7 @@ func (c *Container) initHTTP() error {
 		c.NotificationHandler,
 		c.S3CredentialHandler,
 		c.UploadSessionHandler,
+		c.ToolCredentialHandler,
 		c.Logger,
 	)
 

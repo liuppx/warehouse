@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,7 +19,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestAssetToolHandlerCatalogAndReadOnlyCalls(t *testing.T) {
+func TestAssetToolHandlerCatalogAndCalls(t *testing.T) {
 	objects := service.NewObjectService(t.TempDir())
 	handler := NewAssetToolHandler(&config.Config{}, nil, objects, zap.NewNop())
 	owner := &user.User{ID: "u1", Username: "alice", Directory: "alice", Quota: 0}
@@ -42,13 +43,12 @@ func TestAssetToolHandlerCatalogAndReadOnlyCalls(t *testing.T) {
 	if err := json.NewDecoder(catalogRec.Body).Decode(&catalog); err != nil {
 		t.Fatalf("decode catalog: %v", err)
 	}
-	if len(catalog.Tools) != 4 {
+	if len(catalog.Tools) != 5 {
 		t.Fatalf("unexpected tool count: %d", len(catalog.Tools))
 	}
-	for _, tool := range catalog.Tools {
-		if tool.SideEffects != "none" || tool.ConfirmationRequired {
-			t.Fatalf("P0 tool must be read-only: %+v", tool)
-		}
+	put := catalog.Tools[len(catalog.Tools)-1]
+	if put.Name != assetToolObjectPut || put.SideEffects != "write" || put.ConfirmationRequired || put.Idempotency != "idempotent" {
+		t.Fatalf("unexpected put tool definition: %+v", put)
 	}
 
 	spaceResult := callAssetTool(t, handler, owner, map[string]any{"name": assetToolSpaceList})
@@ -87,11 +87,59 @@ func TestAssetToolHandlerCatalogAndReadOnlyCalls(t *testing.T) {
 	}
 }
 
-func TestAssetToolHandlerRejectsUnknownAndWriteTools(t *testing.T) {
+func TestAssetToolHandlerWritesIdempotentlyAndRequiresExplicitOverwrite(t *testing.T) {
+	objects := service.NewObjectService(t.TempDir())
+	handler := NewAssetToolHandler(&config.Config{}, nil, objects, zap.NewNop())
+	owner := &user.User{ID: "u1", Username: "alice", Directory: "alice", Quota: 0}
+	path := "/personal/reviews/conversations/session-1/transcript.md"
+	body := map[string]any{
+		"name":    assetToolObjectPut,
+		"traceId": "archive-session-1",
+		"arguments": map[string]any{
+			"path":        path,
+			"content":     "# Review\n\nArchived conversation.\n",
+			"contentType": "text/markdown; charset=utf-8",
+		},
+	}
+	first := callAssetTool(t, handler, owner, body)
+	if first["path"] != path || first["contentType"] != "text/markdown; charset=utf-8" || first["checksumSha256"] == "" {
+		t.Fatalf("unexpected first write: %+v", first)
+	}
+	second := callAssetTool(t, handler, owner, body)
+	if second["checksumSha256"] != first["checksumSha256"] {
+		t.Fatalf("idempotent retry changed object: first=%+v second=%+v", first, second)
+	}
+
+	conflict := executeAssetTool(t, handler, owner, map[string]any{
+		"name":      assetToolObjectPut,
+		"arguments": map[string]any{"path": path, "content": "different"},
+	})
+	if conflict.Code != http.StatusConflict || decodeAssetToolErrorCode(t, conflict) != "OBJECT_EXISTS" {
+		t.Fatalf("unexpected conflict: status=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+
+	overwrite := callAssetTool(t, handler, owner, map[string]any{
+		"name":      assetToolObjectPut,
+		"arguments": map[string]any{"path": path, "content": "updated", "overwrite": true},
+	})
+	if overwrite["checksumSha256"] == first["checksumSha256"] {
+		t.Fatalf("overwrite did not change content: %+v", overwrite)
+	}
+
+	precondition := executeAssetTool(t, handler, owner, map[string]any{
+		"name":      assetToolObjectPut,
+		"arguments": map[string]any{"path": path, "content": "again", "overwrite": true, "ifMatch": "stale-etag"},
+	})
+	if precondition.Code != http.StatusPreconditionFailed || decodeAssetToolErrorCode(t, precondition) != "PRECONDITION_FAILED" {
+		t.Fatalf("unexpected precondition response: status=%d body=%s", precondition.Code, precondition.Body.String())
+	}
+}
+
+func TestAssetToolHandlerRejectsUnknownTool(t *testing.T) {
 	handler := NewAssetToolHandler(&config.Config{}, nil, service.NewObjectService(t.TempDir()), zap.NewNop())
 	owner := &user.User{ID: "u1", Username: "alice", Directory: "alice", Quota: 0}
 
-	rec := executeAssetTool(t, handler, owner, map[string]any{"name": "warehouse.object.put", "arguments": map[string]any{}})
+	rec := executeAssetTool(t, handler, owner, map[string]any{"name": "warehouse.object.unknown", "arguments": map[string]any{}})
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("write tool status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -102,6 +150,33 @@ func TestAssetToolHandlerRejectsUnknownAndWriteTools(t *testing.T) {
 	if body["code"] != "UNKNOWN_TOOL" || body["requestId"] == "" {
 		t.Fatalf("unexpected error body: %+v", body)
 	}
+}
+
+func TestAssetToolHandlerPutEnforcesUcanAppScope(t *testing.T) {
+	handler := NewAssetToolHandler(&config.Config{}, nil, service.NewObjectService(t.TempDir()), zap.NewNop())
+	owner := &user.User{ID: "u1", Username: "alice", Directory: "alice", Quota: 0}
+	body := map[string]any{
+		"name":      assetToolObjectPut,
+		"arguments": map[string]any{"path": "/apps/other-app/review.md", "content": "denied"},
+	}
+	rec := executeAssetToolWithContext(t, handler, owner, body, func(ctx context.Context) context.Context {
+		return middleware.WithUcanContext(ctx, &middleware.UcanContext{
+			HasAppCaps: true,
+			AppCaps:    map[string][]string{"allowed-app": {"write"}},
+		})
+	})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func decodeAssetToolErrorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	return fmt.Sprint(body["code"])
 }
 
 func TestAssetToolHandlerEnforcesUcanAppScope(t *testing.T) {

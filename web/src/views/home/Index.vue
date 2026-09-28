@@ -5,7 +5,7 @@ import QRCode from 'qrcode'
 import { ArrowLeft, ArrowRight, ArrowUp, Delete, Expand, Fold, Folder, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User, Lock, Unlock, Wallet } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { getSupportedCipherSuites, type CipherSuiteInfo } from '@yeying-community/web3-bs'
-import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, s3CredentialApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type ReceivedSharedResource, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type S3CredentialItem, type CreateS3CredentialResult, type AdminUserItem, type GroupMember } from '@/api'
+import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, s3CredentialApi, warehouseToolCredentialApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type ReceivedSharedResource, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type S3CredentialItem, type CreateS3CredentialResult, type WarehouseToolCredentialItem, type WarehouseToolAuditItem, type AdminUserItem, type GroupMember } from '@/api'
 import { AUTH_CHANGED_EVENT, isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, focusPendingWalletApproval, createIdentityLoginSession, pollIdentityLoginStatus, watchWalletProvider } from '@/plugins/auth'
 import { decryptBlobContent, encryptFileContent, encryptTextContent } from '@/utils/crypto'
 import {
@@ -163,6 +163,16 @@ const s3CredentialCreateResult = ref<CreateS3CredentialResult | null>(null)
 const s3CredentialName = ref('')
 const s3CredentialBucket = ref<'personal' | 'apps' | 'services'>('personal')
 const s3CredentialDirectory = ref('')
+const toolCredentialLoading = ref(false)
+const toolCredentialSubmitting = ref(false)
+const toolCredentialDialogVisible = ref(false)
+const toolCredentialName = ref('')
+const toolCredentialPath = ref('/personal/reviews/conversations/')
+const toolCredentialExpiresAt = ref('')
+const toolCredentials = ref<WarehouseToolCredentialItem[]>([])
+const toolCredentialCreateResult = ref<{ id: string; secret: string; expiresAt: string; warning: string } | null>(null)
+const toolAuditLoading = ref(false)
+const toolAudits = ref<WarehouseToolAuditItem[]>([])
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const groupStore = useGroupStore()
 const { groupLoading, managedGroups, activeGroupMembers } = storeToRefs(groupStore)
@@ -264,7 +274,7 @@ const SHARED_PATH_STORAGE_KEY = 'warehouse:sharedPath'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'warehouse:sidebarCollapsed'
 type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group' | 'help'
 type ManagementSection = 'account' | 'keys' | 'adminUsers' | 'group'
-type CredentialTab = 'webdav' | 's3'
+type CredentialTab = 'webdav' | 's3' | 'tool'
 type AssetSpace = AssetSpaceInfo
 type ShareExpiryForm = {
   expiresValue: string
@@ -1688,6 +1698,67 @@ async function fetchS3Credentials(withLoading = false) {
   } finally {
     if (withLoading) s3CredentialLoading.value = false
   }
+}
+
+async function fetchToolCredentials(withLoading = false) {
+  if (withLoading) toolCredentialLoading.value = true
+  try {
+    const data = await warehouseToolCredentialApi.list()
+    toolCredentials.value = Array.isArray(data.items) ? data.items : []
+  } catch (error) {
+    console.error('获取 Warehouse Tool 凭证失败:', error)
+    if (withLoading) showError('获取 Warehouse Tool 凭证失败')
+  } finally {
+    if (withLoading) toolCredentialLoading.value = false
+  }
+}
+
+async function fetchToolAudits() {
+  toolAuditLoading.value = true
+  try {
+    const data = await warehouseToolCredentialApi.audits()
+    toolAudits.value = Array.isArray(data.items) ? data.items : []
+  } catch (error) {
+    console.error('获取 Tool 审计失败:', error)
+    showError('获取 Tool 审计失败')
+  } finally {
+    toolAuditLoading.value = false
+  }
+}
+
+function openToolCredentialDialog() {
+  toolCredentialName.value = ''
+  toolCredentialPath.value = '/personal/reviews/conversations/'
+  toolCredentialExpiresAt.value = ''
+  toolCredentialCreateResult.value = null
+  toolCredentialDialogVisible.value = true
+}
+
+async function submitToolCredential() {
+  const name = toolCredentialName.value.trim()
+  const path = toolCredentialPath.value.trim()
+  if (!name || !path || !toolCredentialExpiresAt.value) { showError('请填写名称、授权路径和过期时间'); return }
+  toolCredentialSubmitting.value = true
+  try {
+    toolCredentialCreateResult.value = await warehouseToolCredentialApi.create({ name, scopes: ['asset:read', 'asset:write'], pathPrefixes: [path], expiresAt: new Date(toolCredentialExpiresAt.value).toISOString() })
+    await fetchToolCredentials()
+    showSuccess('Tool 凭证已创建，请立即保存 Secret')
+  } catch (error: any) { showError(error?.message || '创建 Tool 凭证失败') } finally { toolCredentialSubmitting.value = false }
+}
+
+async function rotateToolCredential(item: WarehouseToolCredentialItem) {
+  if (!(await confirmAction(`确定轮换凭证 ${item.name} 吗？旧 Secret 将立即失效。`, '轮换 Tool 凭证'))) return
+  try {
+    toolCredentialCreateResult.value = await warehouseToolCredentialApi.rotate(item.id)
+    toolCredentialDialogVisible.value = true
+    await fetchToolCredentials()
+    showSuccess('Tool 凭证已轮换，请立即保存新 Secret')
+  } catch (error: any) { showError(error?.message || '轮换 Tool 凭证失败') }
+}
+
+async function revokeToolCredential(item: WarehouseToolCredentialItem) {
+  if (item.status !== 'active' || !(await confirmAction(`确定撤销凭证 ${item.name} 吗？`, '撤销 Tool 凭证'))) return
+  try { await warehouseToolCredentialApi.revoke(item.id); await fetchToolCredentials(); showSuccess('Tool 凭证已撤销') } catch (error: any) { showError(error?.message || '撤销 Tool 凭证失败') }
 }
 
 function openS3CredentialDialog() {
@@ -5625,6 +5696,10 @@ watch(accessKeyDialogVisible, visible => {
   accessKeyForm.value = createDefaultAccessKeyForm('/')
 })
 
+watch(credentialTab, tab => {
+  if (tab === 'tool' && !toolCredentials.value.length) fetchToolCredentials(true)
+})
+
 watch(managedGroups, groups => {
   const validIDs = new Set(groups.map(group => group.id))
   const normalized = Array.from(
@@ -6655,6 +6730,29 @@ onBeforeUnmount(() => {
                       </el-table>
                     </div>
                   </el-tab-pane>
+                  <el-tab-pane label="Warehouse Tool" name="tool" @click="fetchToolCredentials(true)">
+                    <div class="credential-tab-head">
+                      <div class="card-subtitle">用于 Chat、Agent 和 Skill 的受限资产 Tool 调用</div>
+                      <div class="user-actions">
+                        <el-button size="small" @click="fetchToolCredentials(true)">刷新</el-button>
+                        <el-button size="small" @click="fetchToolAudits">审计</el-button>
+                        <el-button size="small" type="primary" @click="openToolCredentialDialog">新建</el-button>
+                      </div>
+                    </div>
+                    <div class="credential-tab-body" v-loading="toolCredentialLoading">
+                      <el-empty v-if="!toolCredentials.length && !toolCredentialLoading" description="暂无 Warehouse Tool 凭证" />
+                      <el-table v-else :data="toolCredentials" size="small">
+                        <el-table-column prop="name" label="名称" min-width="150" />
+                        <el-table-column label="授权范围" min-width="240"><template #default="{ row }"><div class="key-meta-row"><el-tag v-for="path in row.pathPrefixes" :key="path" size="small" type="info">{{ path }}</el-tag></div></template></el-table-column>
+                        <el-table-column prop="expiresAt" label="过期时间" min-width="180" />
+                        <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '生效中' : '已撤销' }}</el-tag></template></el-table-column>
+                        <el-table-column label="操作" width="180"><template #default="{ row }"><el-button v-if="row.status === 'active'" text size="small" @click="rotateToolCredential(row)">轮换</el-button><el-button v-if="row.status === 'active'" text type="danger" size="small" @click="revokeToolCredential(row)">撤销</el-button></template></el-table-column>
+                      </el-table>
+                      <el-table v-if="toolAudits.length" :data="toolAudits" size="small" class="tool-audit-table" v-loading="toolAuditLoading">
+                        <el-table-column prop="createdAt" label="时间" width="180" /><el-table-column prop="toolName" label="Tool" min-width="180" /><el-table-column prop="path" label="路径" min-width="240" /><el-table-column prop="outcome" label="结果" width="100" />
+                      </el-table>
+                    </div>
+                  </el-tab-pane>
                 </el-tabs>
               </div>
               <div v-if="managementSection === 'group'" class="user-card user-card-full" v-loading="groupLoading && !manualRefresh">
@@ -7133,6 +7231,21 @@ onBeforeUnmount(() => {
           <el-button @click="s3CredentialDialogVisible = false">关闭</el-button>
           <el-button v-if="!s3CredentialCreateResult" type="primary" :loading="s3CredentialSubmitting" @click="submitS3Credential">创建凭证</el-button>
         </template>
+      </el-dialog>
+      <el-dialog v-model="toolCredentialDialogVisible" title="Warehouse Tool 凭证" width="560px">
+        <el-form v-if="!toolCredentialCreateResult" label-position="top">
+          <el-form-item label="凭证名称"><el-input v-model="toolCredentialName" placeholder="例如：conversation-review" /></el-form-item>
+          <el-form-item label="授权路径"><el-input v-model="toolCredentialPath" placeholder="例如：/personal/reviews/conversations/" /></el-form-item>
+          <el-form-item label="过期时间"><el-date-picker v-model="toolCredentialExpiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" placeholder="选择过期时间" /></el-form-item>
+          <div class="access-key-permission-help">权限固定为 asset:read + asset:write，仅允许访问授权路径及其子目录。</div>
+        </el-form>
+        <div v-else class="access-key-created">
+          <div class="access-key-created-title">操作成功，请立即保存 Secret（仅显示一次）</div>
+          <div class="access-key-created-row"><span class="access-key-created-label">Credential ID</span><span class="access-key-created-value mono">{{ toolCredentialCreateResult.id }}</span><el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(toolCredentialCreateResult.id, 'Credential ID')">复制</el-button></div>
+          <div class="access-key-created-row"><span class="access-key-created-label">Secret</span><span class="access-key-created-value mono">{{ toolCredentialCreateResult.secret }}</span><el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(toolCredentialCreateResult.secret, 'Secret')">复制</el-button></div>
+          <div class="access-key-permission-help">关闭弹窗后 Secret 无法恢复。生产 Agent 请使用 YEYING_WAREHOUSE_TOOL_TOKEN 保存该值。</div>
+        </div>
+        <template #footer><el-button @click="toolCredentialDialogVisible = false">关闭</el-button><el-button v-if="!toolCredentialCreateResult" type="primary" :loading="toolCredentialSubmitting" @click="submitToolCredential">创建凭证</el-button></template>
       </el-dialog>
       <el-dialog
         v-model="adminUsersDialogVisible"

@@ -26,6 +26,8 @@ tags:
     description: WebDAV Basic Auth 访问密钥
   - name: S3 credentials
     description: AWS Signature V4 凭证
+  - name: Warehouse Tool credentials
+    description: 面向模型 Tool 的短期、受限凭证和审计
   - name: Notifications
     description: 用户通知、偏好和实时未读数
   - name: Groups
@@ -43,7 +45,7 @@ tags:
   - name: Upload sessions
     description: 可恢复分片上传会话
   - name: Warehouse tools
-    description: 面向模型客户端和 Agent 的 Warehouse 只读 Tool 适配入口
+    description: 面向模型客户端和 Agent 的 Warehouse 资产 Tool 适配入口
 
 paths:
   /api/v1/public/health/heartbeat:
@@ -404,7 +406,7 @@ paths:
       operationId: listWarehouseTools
       summary: 列出 Warehouse 当前提供的 Tool 定义
       description: |
-        返回 Warehouse 当前 HTTP Tool 适配层支持的 Tool 定义。当前只暴露 P0 只读资产 Tool，
+        返回 Warehouse 当前 HTTP Tool 适配层支持的 Tool 定义，包括 P0 只读能力和受授权约束的小对象写入能力，
         不代表 Warehouse 已经提供独立 MCP Server。
       responses:
         "200":
@@ -417,9 +419,9 @@ paths:
     post:
       tags: [Warehouse tools]
       operationId: callWarehouseTool
-      summary: 调用 Warehouse 只读 Tool
+      summary: 调用 Warehouse 资产 Tool
       description: |
-        通过稳定 Tool 名称调用 Warehouse 资产只读能力。该适配层复用 Warehouse 现有认证、
+        通过稳定 Tool 名称调用 Warehouse 资产能力。该适配层复用 Warehouse 现有认证、
         UCAN app scope、路径规范化和对象服务，不实现第二套权限判断。
       requestBody:
         required: true
@@ -439,6 +441,15 @@ paths:
                     path: /personal/docs/source.md
                     mode: content
                     maxBytes: 1048576
+              archive:
+                value:
+                  name: warehouse.object.put
+                  arguments:
+                    path: /personal/reviews/conversations/session-123/transcript.md
+                    content: "# Conversation review\n"
+                    encoding: utf-8
+                    contentType: text/markdown; charset=utf-8
+                    overwrite: false
       responses:
         "200":
           description: Tool 调用成功
@@ -449,7 +460,97 @@ paths:
         "401": {$ref: "#/components/responses/AssetToolError"}
         "403": {$ref: "#/components/responses/AssetToolError"}
         "404": {$ref: "#/components/responses/AssetToolError"}
+        "409": {$ref: "#/components/responses/AssetToolError"}
+        "412": {$ref: "#/components/responses/AssetToolError"}
         "413": {$ref: "#/components/responses/AssetToolError"}
+  /api/v1/public/tools/credentials:
+    get:
+      tags: [Warehouse Tool credentials]
+      operationId: listWarehouseToolCredentials
+      summary: 列出当前用户的 Warehouse Tool 凭证
+      responses:
+        "200":
+          description: 凭证列表，不包含 secret
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WarehouseToolCredentialList"}
+        "401": {$ref: "#/components/responses/AssetToolError"}
+    post:
+      tags: [Warehouse Tool credentials]
+      operationId: createWarehouseToolCredential
+      summary: 创建 Warehouse Tool 凭证
+      description: secret 只在本次响应返回一次；该接口仅接受用户登录 JWT。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WarehouseToolCredentialCreateRequest"}
+      responses:
+        "200":
+          description: 凭证和一次性 secret
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WarehouseToolCredentialCreated"}
+        "400": {$ref: "#/components/responses/AssetToolError"}
+        "401": {$ref: "#/components/responses/AssetToolError"}
+  /api/v1/public/tools/credentials/{id}/rotate:
+    post:
+      tags: [Warehouse Tool credentials]
+      operationId: rotateWarehouseToolCredential
+      summary: 轮换 Warehouse Tool 凭证
+      description: 旧 secret 立即失效，新 secret 只在本次响应返回一次。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expiresAt: {type: string, format: date-time}
+      responses:
+        "200":
+          description: 新的一次性 secret
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WarehouseToolCredentialRotated"}
+        "401": {$ref: "#/components/responses/AssetToolError"}
+        "404": {$ref: "#/components/responses/AssetToolError"}
+  /api/v1/public/tools/credentials/{id}/revoke:
+    post:
+      tags: [Warehouse Tool credentials]
+      operationId: revokeWarehouseToolCredential
+      summary: 撤销 Warehouse Tool 凭证
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204": {description: 撤销成功}
+        "401": {$ref: "#/components/responses/AssetToolError"}
+        "404": {$ref: "#/components/responses/AssetToolError"}
+  /api/v1/public/tools/audits:
+    get:
+      tags: [Warehouse Tool credentials]
+      operationId: listWarehouseToolAudits
+      summary: 查询当前用户的 Tool 凭证审计
+      parameters:
+        - name: credentialId
+          in: query
+          required: false
+          schema: {type: string}
+      responses:
+        "200":
+          description: 审计事件，不包含 secret 或对象正文
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WarehouseToolAuditList"}
+        "401": {$ref: "#/components/responses/AssetToolError"}
   /api/v1/public/webdav/quota:
     get:
       tags: [User]
@@ -2031,6 +2132,81 @@ components:
         code: {type: string}
         message: {type: string}
         requestId: {type: string}
+    WarehouseToolCredential:
+      type: object
+      required: [id, name, scopes, pathPrefixes, status, expiresAt, createdAt]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        scopes:
+          type: array
+          items: {type: string, enum: [asset:read, asset:write]}
+        pathPrefixes:
+          type: array
+          items: {type: string}
+        status: {type: string, enum: [active, revoked]}
+        expiresAt: {type: string, format: date-time}
+        createdAt: {type: string, format: date-time}
+        lastUsedAt:
+          type: [string, "null"]
+          format: date-time
+    WarehouseToolCredentialList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/WarehouseToolCredential"}
+    WarehouseToolCredentialCreateRequest:
+      type: object
+      required: [name, scopes, pathPrefixes, expiresAt]
+      properties:
+        name: {type: string}
+        scopes:
+          type: array
+          minItems: 1
+          items: {type: string, enum: [asset:read, asset:write]}
+        pathPrefixes:
+          type: array
+          minItems: 1
+          items: {type: string}
+        expiresAt: {type: string, format: date-time}
+    WarehouseToolCredentialCreated:
+      allOf:
+        - {$ref: "#/components/schemas/WarehouseToolCredential"}
+        - type: object
+          required: [secret]
+          properties:
+            secret: {type: string, writeOnly: true}
+            warning: {type: string}
+    WarehouseToolCredentialRotated:
+      type: object
+      required: [id, secret, expiresAt]
+      properties:
+        id: {type: string}
+        secret: {type: string, writeOnly: true}
+        expiresAt: {type: string, format: date-time}
+        warning: {type: string}
+    WarehouseToolAudit:
+      type: object
+      required: [id, credentialId, action, outcome, createdAt]
+      properties:
+        id: {type: string}
+        credentialId: {type: string}
+        toolName: {type: string}
+        action: {type: string}
+        path: {type: string}
+        outcome: {type: string}
+        requestId: {type: string}
+        traceId: {type: string}
+        createdAt: {type: string, format: date-time}
+    WarehouseToolAuditList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/WarehouseToolAudit"}
     AssetToolCatalog:
       type: object
       required: [tools]
@@ -2049,6 +2225,7 @@ components:
             - warehouse.object.list
             - warehouse.object.stat
             - warehouse.object.read
+            - warehouse.object.put
         version: {type: string}
         description: {type: string}
         inputSchema: {type: object, additionalProperties: true}
@@ -2056,8 +2233,8 @@ components:
         requiredScopes:
           type: array
           items: {type: string}
-        sideEffects: {type: string, enum: [none]}
-        idempotency: {type: string, enum: [safe]}
+        sideEffects: {type: string, enum: [none, write]}
+        idempotency: {type: string, enum: [safe, idempotent]}
         confirmationRequired: {type: boolean, const: false}
         sourceApi:
           type: object
@@ -2076,6 +2253,7 @@ components:
             - warehouse.object.list
             - warehouse.object.stat
             - warehouse.object.read
+            - warehouse.object.put
         arguments:
           type: object
           additionalProperties: true

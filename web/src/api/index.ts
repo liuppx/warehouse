@@ -519,6 +519,52 @@ export const s3CredentialApi = {
   }
 }
 
+export interface WarehouseToolCredentialItem {
+  id: string
+  name: string
+  scopes: string[]
+  pathPrefixes: string[]
+  status: 'active' | 'revoked'
+  expiresAt: string
+  createdAt: string
+  lastUsedAt?: string | null
+}
+
+export interface WarehouseToolAuditItem {
+  id: string
+  credentialId: string
+  toolName?: string
+  action: string
+  path?: string
+  outcome: string
+  requestId?: string
+  traceId?: string
+  createdAt: string
+}
+
+export const warehouseToolCredentialApi = {
+  list() {
+    return request<{ items: WarehouseToolCredentialItem[] }>('/api/v1/public/tools/credentials')
+  },
+  create(payload: { name: string; scopes: string[]; pathPrefixes: string[]; expiresAt: string }) {
+    return request<WarehouseToolCredentialItem & { secret: string; warning: string }>('/api/v1/public/tools/credentials', {
+      method: 'POST', body: payload
+    })
+  },
+  rotate(id: string, expiresAt?: string) {
+    return request<{ id: string; secret: string; expiresAt: string; warning: string }>(`/api/v1/public/tools/credentials/${encodeURIComponent(id)}/rotate`, {
+      method: 'POST', body: expiresAt ? { expiresAt } : {}
+    })
+  },
+  revoke(id: string) {
+    return request<void>(`/api/v1/public/tools/credentials/${encodeURIComponent(id)}/revoke`, { method: 'POST' })
+  },
+  audits(credentialId?: string) {
+    const query = credentialId ? `?credentialId=${encodeURIComponent(credentialId)}` : ''
+    return request<{ items: WarehouseToolAuditItem[] }>(`/api/v1/public/tools/audits${query}`)
+  }
+}
+
 export const groupApi = {
   listGroups() {
     return request<{ items: ManagedGroup[] }>('/api/v1/public/webdav/group/groups')
