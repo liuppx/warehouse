@@ -155,6 +155,10 @@ const accessKeyDirectoryPickerVisible = ref(false)
 const accessKeyDirectoryPickerLoading = ref(false)
 const accessKeyDirectoryPickerPath = ref('/personal')
 const accessKeyDirectoryPickerItems = ref<FileItem[]>([])
+const directoryPickerTarget = ref<'accessKey' | 'tool'>('accessKey')
+const directoryPickerCreateMode = ref(false)
+const directoryPickerNewFolderName = ref('')
+const directoryPickerCreateSubmitting = ref(false)
 const s3CredentialLoading = ref(false)
 const s3CredentialSubmitting = ref(false)
 const s3CredentialDialogVisible = ref(false)
@@ -167,7 +171,8 @@ const toolCredentialLoading = ref(false)
 const toolCredentialSubmitting = ref(false)
 const toolCredentialDialogVisible = ref(false)
 const toolCredentialName = ref('')
-const toolCredentialPath = ref('/personal/reviews/conversations/')
+const toolCredentialPath = ref('')
+const toolCredentialScopes = ref<string[]>(['asset:read', 'asset:write'])
 const toolCredentialExpiresAt = ref('')
 const toolCredentials = ref<WarehouseToolCredentialItem[]>([])
 const toolCredentialCreateResult = ref<{ id: string; secret: string; expiresAt: string; warning: string } | null>(null)
@@ -317,6 +322,10 @@ const ACCESS_KEY_PERMISSIONS: Array<{ label: string; value: AccessKeyPermission 
   { label: '新增', value: 'create' },
   { label: '修改', value: 'update' },
   { label: '删除', value: 'delete' }
+]
+const TOOL_CREDENTIAL_SCOPES: Array<{ label: string; value: string; description: string }> = [
+  { label: '读取', value: 'asset:read', description: '列出、查看授权目录中的对象' },
+  { label: '写入', value: 'asset:write', description: '在授权目录中创建或更新对象' }
 ]
 const ASSET_SPACE_NAME_BY_KEY: Record<string, string> = {
   personal: '个人资产',
@@ -1728,7 +1737,8 @@ async function fetchToolAudits() {
 
 function openToolCredentialDialog() {
   toolCredentialName.value = ''
-  toolCredentialPath.value = '/personal/reviews/conversations/'
+  toolCredentialPath.value = ''
+  toolCredentialScopes.value = ['asset:read', 'asset:write']
   toolCredentialExpiresAt.value = ''
   toolCredentialCreateResult.value = null
   toolCredentialDialogVisible.value = true
@@ -1736,11 +1746,19 @@ function openToolCredentialDialog() {
 
 async function submitToolCredential() {
   const name = toolCredentialName.value.trim()
-  const path = toolCredentialPath.value.trim()
-  if (!name || !path || !toolCredentialExpiresAt.value) { showError('请填写名称、授权路径和过期时间'); return }
+  const path = normalizeAccessKeyRootPath(toolCredentialPath.value)
+  if (!name || path === '/' || !toolCredentialExpiresAt.value || !toolCredentialScopes.value.length) {
+    showError('请填写名称、选择授权目录、至少一项权限和过期时间')
+    return
+  }
   toolCredentialSubmitting.value = true
   try {
-    toolCredentialCreateResult.value = await warehouseToolCredentialApi.create({ name, scopes: ['asset:read', 'asset:write'], pathPrefixes: [path], expiresAt: new Date(toolCredentialExpiresAt.value).toISOString() })
+    toolCredentialCreateResult.value = await warehouseToolCredentialApi.create({
+      name,
+      scopes: [...toolCredentialScopes.value],
+      pathPrefixes: [path],
+      expiresAt: new Date(toolCredentialExpiresAt.value).toISOString()
+    })
     await fetchToolCredentials()
     showSuccess('Tool 凭证已创建，请立即保存 Secret')
   } catch (error: any) { showError(error?.message || '创建 Tool 凭证失败') } finally { toolCredentialSubmitting.value = false }
@@ -2230,6 +2248,9 @@ async function loadAccessKeyDirectoryPicker(path: string) {
 }
 
 function openAccessKeyDirectoryPicker() {
+  directoryPickerTarget.value = 'accessKey'
+  directoryPickerCreateMode.value = false
+  directoryPickerNewFolderName.value = ''
   const selected = normalizeAccessKeyRootPath(accessKeyForm.value.rootPath)
   const initial = resolveAssetSpaceByPath(selected)?.path
     ? selected
@@ -2238,12 +2259,83 @@ function openAccessKeyDirectoryPicker() {
   void loadAccessKeyDirectoryPicker(initial)
 }
 
+function openToolCredentialDirectoryPicker() {
+  directoryPickerTarget.value = 'tool'
+  directoryPickerCreateMode.value = false
+  directoryPickerNewFolderName.value = ''
+  const selected = normalizeAccessKeyRootPath(toolCredentialPath.value)
+  const initial = resolveAssetSpaceByPath(selected)?.path
+    ? selected
+    : (getDefaultAssetSpace()?.path || '/personal')
+  accessKeyDirectoryPickerVisible.value = true
+  void loadAccessKeyDirectoryPicker(initial)
+}
+
+function beginDirectoryPickerCreateFolder() {
+  directoryPickerNewFolderName.value = ''
+  directoryPickerCreateMode.value = true
+}
+
+function cancelDirectoryPickerCreateFolder() {
+  directoryPickerCreateMode.value = false
+  directoryPickerNewFolderName.value = ''
+}
+
+async function createDirectoryPickerFolder() {
+  const name = directoryPickerNewFolderName.value.trim()
+  if (!name) {
+    showError('请输入目录名称')
+    return
+  }
+  if (name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+    showError('目录名称不能包含路径分隔符或 .、..')
+    return
+  }
+  const parentPath = normalizeAccessKeyRootPath(accessKeyDirectoryPickerPath.value)
+  if (!resolveAssetSpaceByPath(parentPath)) {
+    showError('只能在资产空间内创建目录')
+    return
+  }
+  const targetPath = normalizeAccessKeyRootPath(`${parentPath}/${name}`)
+  const token = localStorage.getItem('authToken') || ''
+  directoryPickerCreateSubmitting.value = true
+  try {
+    const response = await fetch(buildDavPath(targetPath), {
+      method: 'MKCOL',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    if (response.status === 405) {
+      throw new Error('目录已存在')
+    }
+    if (!response.ok) {
+      const text = (await response.text()).trim()
+      throw new Error(normalizeUserFacingErrorMessage(text, `创建目录失败: ${response.status}`))
+    }
+    cancelDirectoryPickerCreateFolder()
+    await loadAccessKeyDirectoryPicker(parentPath)
+    showSuccess(`目录已创建：${name}`)
+  } catch (error: any) {
+    console.error('创建授权目录失败:', error)
+    showError(errorMessageFromUnknown(error, '创建目录失败'))
+  } finally {
+    directoryPickerCreateSubmitting.value = false
+  }
+}
+
 function enterAccessKeyDirectoryPickerItem(item: FileItem) {
   if (item.isDir) void loadAccessKeyDirectoryPicker(item.path)
 }
 
 function selectAccessKeyDirectoryPickerPath() {
-  accessKeyForm.value.rootPath = normalizeAccessKeyRootPath(accessKeyDirectoryPickerPath.value)
+  const selected = normalizeAccessKeyRootPath(accessKeyDirectoryPickerPath.value)
+  if (directoryPickerTarget.value === 'tool') {
+    toolCredentialPath.value = selected
+    accessKeyDirectoryPickerVisible.value = false
+    return
+  }
+  accessKeyForm.value.rootPath = selected
   accessKeyDirectoryPickerVisible.value = false
 }
 
@@ -7138,7 +7230,7 @@ onBeforeUnmount(() => {
       </el-dialog>
       <el-dialog
         v-model="accessKeyDirectoryPickerVisible"
-        title="选择 WebDAV 授权目录"
+        :title="directoryPickerTarget === 'tool' ? '选择 Tool 授权目录' : '选择 WebDAV 授权目录'"
         width="620px"
         append-to-body
       >
@@ -7162,6 +7254,19 @@ onBeforeUnmount(() => {
               <el-button text @click="loadAccessKeyDirectoryPicker(crumb.path)">{{ crumb.label }}</el-button>
             </el-breadcrumb-item>
           </el-breadcrumb>
+          <div class="access-key-directory-create">
+            <template v-if="directoryPickerCreateMode">
+              <el-input
+                v-model="directoryPickerNewFolderName"
+                placeholder="输入新目录名称"
+                :disabled="directoryPickerCreateSubmitting"
+                @keyup.enter="createDirectoryPickerFolder"
+              />
+              <el-button type="primary" :loading="directoryPickerCreateSubmitting" @click="createDirectoryPickerFolder">创建</el-button>
+              <el-button :disabled="directoryPickerCreateSubmitting" @click="cancelDirectoryPickerCreateFolder">取消</el-button>
+            </template>
+            <el-button v-else size="small" class="access-key-ghost-button" @click="beginDirectoryPickerCreateFolder">新建目录</el-button>
+          </div>
           <div v-loading="accessKeyDirectoryPickerLoading" class="access-key-directory-list">
             <button
               v-for="item in accessKeyDirectoryPickerItems"
@@ -7233,11 +7338,24 @@ onBeforeUnmount(() => {
         </template>
       </el-dialog>
       <el-dialog v-model="toolCredentialDialogVisible" title="Warehouse Tool 凭证" width="560px">
-        <el-form v-if="!toolCredentialCreateResult" label-position="top">
+        <el-form v-if="!toolCredentialCreateResult" label-position="top" class="tool-credential-form">
           <el-form-item label="凭证名称"><el-input v-model="toolCredentialName" placeholder="例如：conversation-review" /></el-form-item>
-          <el-form-item label="授权路径"><el-input v-model="toolCredentialPath" placeholder="例如：/personal/reviews/conversations/" /></el-form-item>
+          <el-form-item label="授权目录">
+            <div class="access-key-directory-field">
+              <el-input v-model="toolCredentialPath" readonly placeholder="请选择 Warehouse 目录" />
+              <el-button @click="openToolCredentialDirectoryPicker">选择</el-button>
+            </div>
+            <div class="access-key-permission-help">授权覆盖所选目录及其子目录，请按最小权限原则选择。</div>
+          </el-form-item>
+          <el-form-item label="Tool 权限">
+            <el-checkbox-group v-model="toolCredentialScopes" class="tool-credential-scope-options">
+              <el-checkbox v-for="scope in TOOL_CREDENTIAL_SCOPES" :key="scope.value" :label="scope.value">
+                <span>{{ scope.label }}</span>
+                <span class="tool-credential-scope-description">{{ scope.description }}</span>
+              </el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
           <el-form-item label="过期时间"><el-date-picker v-model="toolCredentialExpiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" placeholder="选择过期时间" /></el-form-item>
-          <div class="access-key-permission-help">权限固定为 asset:read + asset:write，仅允许访问授权路径及其子目录。</div>
         </el-form>
         <div v-else class="access-key-created">
           <div class="access-key-created-title">操作成功，请立即保存 Secret（仅显示一次）</div>
@@ -8528,6 +8646,41 @@ onBeforeUnmount(() => {
 
 .s3-credential-bucket-select {
   width: 100%;
+}
+
+.tool-credential-form :deep(.el-form-item) {
+  margin-bottom: 16px;
+}
+
+.access-key-directory-create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.access-key-directory-create .el-input {
+  flex: 1;
+  min-width: 160px;
+}
+
+.tool-credential-scope-options {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.tool-credential-scope-options :deep(.el-checkbox) {
+  height: auto;
+  margin-right: 0;
+  line-height: 1.4;
+}
+
+.tool-credential-scope-description {
+  margin-left: 4px;
+  color: #909399;
+  font-size: 12px;
 }
 
 .admin-quota-table {
