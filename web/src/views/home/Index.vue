@@ -214,6 +214,11 @@ const renameForm = ref({
   name: ''
 })
 type PreviewMode = 'text' | 'pdf' | 'word' | 'image' | 'audio' | 'video'
+type PreviewFormatOption = {
+  mode: PreviewMode
+  label: string
+  extensions: string
+}
 const previewVisible = ref(false)
 const previewMode = ref<PreviewMode | null>(null)
 const previewLoading = ref(false)
@@ -224,6 +229,9 @@ const previewTarget = ref<FileItem | null>(null)
 const previewBlob = ref<Blob | null>(null)
 const previewSourceUrl = ref('')
 const previewReadOnly = ref(false)
+const previewFormatDialogVisible = ref(false)
+const previewFormatTarget = ref<FileItem | null>(null)
+const previewFormatSelection = ref<PreviewMode | null>(null)
 let previewRequestSeq = 0
 let identityBroadcastChannel: BroadcastChannel | null = null
 const encryptedDirectoryRoots = ref<string[]>([])
@@ -926,6 +934,14 @@ const WORD_EXTENSIONS = new Set(['docx'])
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico'])
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'opus', 'weba', 'oga'])
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'ogv', 'mov', 'm4v', 'mkv'])
+const PREVIEW_FORMAT_OPTIONS: PreviewFormatOption[] = [
+  { mode: 'text', label: '文本', extensions: 'TXT、MD、JSON、YAML 等' },
+  { mode: 'pdf', label: 'PDF', extensions: 'PDF 文档' },
+  { mode: 'word', label: 'Word', extensions: 'DOCX 文档' },
+  { mode: 'image', label: '图片', extensions: 'PNG、JPG、WEBP 等' },
+  { mode: 'audio', label: '音频', extensions: 'MP3、WAV、OGG 等' },
+  { mode: 'video', label: '视频', extensions: 'MP4、WEBM、MOV 等' }
+]
 
 function getFileExtension(name: string): string {
   if (!name) return ''
@@ -953,6 +969,46 @@ function getPreviewMode(item?: FileItem | null): PreviewMode | null {
   if (ext && AUDIO_EXTENSIONS.has(ext)) return 'audio'
   if (ext && VIDEO_EXTENSIONS.has(ext)) return 'video'
   return null
+}
+
+function mimeTypeForPreviewMode(mode: PreviewMode): string {
+  switch (mode) {
+    case 'text':
+      return 'text/plain;charset=utf-8'
+    case 'pdf':
+      return 'application/pdf'
+    case 'word':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    case 'image':
+      return 'image/png'
+    case 'audio':
+      return 'audio/mpeg'
+    case 'video':
+      return 'video/mp4'
+  }
+}
+
+function openPreviewFormatDialog(item: FileItem) {
+  previewFormatTarget.value = item
+  previewFormatSelection.value = null
+  previewFormatDialogVisible.value = true
+}
+
+function closePreviewFormatDialog() {
+  previewFormatDialogVisible.value = false
+  previewFormatTarget.value = null
+  previewFormatSelection.value = null
+}
+
+function confirmPreviewFormat() {
+  const target = previewFormatTarget.value
+  const mode = previewFormatSelection.value
+  if (!target || !mode) {
+    showInfo('请选择打开格式')
+    return
+  }
+  closePreviewFormatDialog()
+  void openFilePreview(target, mode)
 }
 
 function isImagePreviewItem(item?: FileItem | null): boolean {
@@ -2673,12 +2729,14 @@ function openSharedEntryDetail(item: FileItem) {
   detailDrawerVisible.value = true
 }
 
-async function openFilePreview(item: FileItem) {
-  const mode = getPreviewMode(item)
+async function openFilePreview(item: FileItem, forcedMode?: PreviewMode) {
+  const detectedMode = getPreviewMode(item)
+  const mode = forcedMode || detectedMode
   if (!mode) {
-    showError('暂不支持预览该类型文件')
+    openPreviewFormatDialog(item)
     return
   }
+  const forcedFormat = Boolean(forcedMode && !detectedMode)
   const requestSeq = ++previewRequestSeq
   detailDrawerVisible.value = false
   previewTarget.value = item
@@ -2706,9 +2764,11 @@ async function openFilePreview(item: FileItem) {
         previewContent.value = text
         previewOrigin.value = text
       } else if (mode === 'audio' || mode === 'video') {
-        previewSourceUrl.value = createEncryptedDownloadURL(bytes, item.name)
+        previewSourceUrl.value = createEncryptedDownloadURL(bytes, item.name, mimeTypeForPreviewMode(mode))
       } else {
-        previewBlob.value = new Blob([bytes], { type: inferFileMimeType(item.name) })
+        previewBlob.value = new Blob([bytes], {
+          type: forcedFormat ? mimeTypeForPreviewMode(mode) : inferFileMimeType(item.name)
+        })
       }
     } else if (mode === 'text') {
       const response = await fetch(
@@ -2728,9 +2788,24 @@ async function openFilePreview(item: FileItem) {
       previewContent.value = text
       previewOrigin.value = text
     } else if (mode === 'audio' || mode === 'video') {
-      ensureAuthCookie(token)
-      if (requestSeq !== previewRequestSeq) return
-      previewSourceUrl.value = previewURL
+      if (forcedFormat) {
+        const response = await fetch(previewURL, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (!response.ok) {
+          throw new Error(`读取失败: ${response.status}`)
+        }
+        if (requestSeq !== previewRequestSeq) return
+        const blob = await response.blob()
+        previewSourceUrl.value = URL.createObjectURL(new Blob([blob], { type: mimeTypeForPreviewMode(mode) }))
+      } else {
+        ensureAuthCookie(token)
+        if (requestSeq !== previewRequestSeq) return
+        previewSourceUrl.value = previewURL
+      }
     } else if (mode === 'pdf' || mode === 'word' || mode === 'image') {
       const response = await fetch(
         previewURL,
@@ -2745,7 +2820,10 @@ async function openFilePreview(item: FileItem) {
         throw new Error(`读取失败: ${response.status}`)
       }
       if (requestSeq !== previewRequestSeq) return
-      previewBlob.value = await response.blob()
+      const blob = await response.blob()
+      previewBlob.value = forcedFormat
+        ? new Blob([blob], { type: mimeTypeForPreviewMode(mode) })
+        : blob
     }
   } catch (error: any) {
     if (requestSeq !== previewRequestSeq) return
@@ -7406,6 +7484,38 @@ onBeforeUnmount(() => {
           <el-button type="primary" :loading="adminUsersSubmitting" @click="submitAdminUsersUpdate">保存</el-button>
         </template>
       </el-dialog>
+      <el-dialog
+        v-model="previewFormatDialogVisible"
+        title="选择打开格式"
+        width="480px"
+        :close-on-click-modal="false"
+        @closed="closePreviewFormatDialog"
+      >
+        <div class="preview-format-dialog">
+          <div class="preview-format-target" :title="previewFormatTarget?.name || ''">
+            {{ previewFormatTarget?.name || '当前文件' }}
+          </div>
+          <div class="preview-format-hint">文件后缀未识别，请选择内容格式打开。此选择仅影响本次预览，不会修改原文件。</div>
+          <el-radio-group v-model="previewFormatSelection" class="preview-format-options">
+            <el-radio
+              v-for="option in PREVIEW_FORMAT_OPTIONS"
+              :key="option.mode"
+              :label="option.mode"
+              border
+              class="preview-format-option"
+            >
+              <span class="preview-format-option-label">{{ option.label }}</span>
+              <span class="preview-format-option-extensions">{{ option.extensions }}</span>
+            </el-radio>
+          </el-radio-group>
+        </div>
+        <template #footer>
+          <el-button @click="closePreviewFormatDialog">取消</el-button>
+          <el-button type="primary" :disabled="!previewFormatSelection" @click="confirmPreviewFormat">
+            打开
+          </el-button>
+        </template>
+      </el-dialog>
       <FilePreviewDialog
         v-model="previewVisible"
         v-model:content="previewContent"
@@ -9019,6 +9129,60 @@ onBeforeUnmount(() => {
   margin-top: 4px;
   font-size: 12px;
   color: #606266;
+}
+
+.preview-format-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.preview-format-target {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-format-hint {
+  color: #909399;
+  font-size: 13px;
+}
+
+.preview-format-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.preview-format-option {
+  height: auto;
+  min-height: 58px;
+  margin: 0 !important;
+  display: flex;
+  align-items: center;
+}
+
+.preview-format-option :deep(.el-radio__label) {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.preview-format-option-label {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.preview-format-option-extensions {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 .quota-value {

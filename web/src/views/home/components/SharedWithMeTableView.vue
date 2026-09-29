@@ -63,7 +63,11 @@ function handleMobileCommand(row: FileItem, command: string | number) {
 }
 
 function canPreview(row: FileItem): boolean {
-  return props.sharedCanRead && !row.isDir && !!props.getPreviewMode(row)
+  return props.sharedCanRead && !row.isDir
+}
+
+function getPreviewActionLabel(row: FileItem): string {
+  return props.getPreviewMode(row) ? '预览' : '选择格式打开'
 }
 
 function getSharedEntryRowClassName({ row }: { row: FileItem }) {
@@ -175,7 +179,7 @@ function getSharedEntryRowClassName({ row }: { row: FileItem }) {
           <el-tooltip v-if="row.isDir" content="详情" placement="top">
             <el-button type="primary" link :icon="View" @click="openSharedEntryDetail(row)" />
           </el-tooltip>
-          <el-tooltip v-if="canPreview(row)" content="预览" placement="top">
+          <el-tooltip v-if="canPreview(row)" :content="getPreviewActionLabel(row)" placement="top">
             <el-button type="primary" link :icon="View" @click="openFilePreview(row)" />
           </el-tooltip>
           <el-tooltip v-if="!row.isDir && sharedCanRead" content="下载" placement="top">
@@ -269,19 +273,28 @@ function getSharedEntryRowClassName({ row }: { row: FileItem }) {
               :icon="View"
               @click="openSharedEntryDetail(row)"
             />
-            <el-button
-              v-else-if="sharedCanRead"
-              size="small"
-              circle
-              type="primary"
-              :icon="Download"
-              @click="downloadSharedFile(row)"
-            />
+            <template v-else-if="sharedCanRead">
+              <el-button
+                v-if="canPreview(row)"
+                size="small"
+                circle
+                type="primary"
+                :icon="View"
+                @click="openFilePreview(row)"
+              />
+              <el-button
+                size="small"
+                circle
+                type="primary"
+                :icon="Download"
+                @click="downloadSharedFile(row)"
+              />
+            </template>
             <el-dropdown @command="handleMobileCommand(row, $event)">
               <el-button size="small" circle :icon="MoreFilled" />
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
+                  <el-dropdown-item v-if="canPreview(row)" command="preview">{{ getPreviewActionLabel(row) }}</el-dropdown-item>
                   <el-dropdown-item v-if="!row.isDir && sharedCanRead" command="share-link">生成下载链接</el-dropdown-item>
                   <el-dropdown-item v-if="sharedCanUpdate" command="rename">重命名</el-dropdown-item>
                   <el-dropdown-item v-if="sharedCanDelete" command="delete">删除</el-dropdown-item>

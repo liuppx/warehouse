@@ -37,7 +37,11 @@ const props = defineProps<{
 const tableRef = ref()
 
 function canPreview(row: FileItem): boolean {
-  return !row.isDir && !!props.getPreviewMode(row)
+  return !row.isDir
+}
+
+function getPreviewActionLabel(row: FileItem): string {
+  return props.getPreviewMode(row) ? '预览' : '选择格式打开'
 }
 
 function canShare(row: FileItem): boolean {
@@ -160,11 +164,11 @@ watch(() => props.selectionEnabled, enabled => {
     <el-table-column label="操作" width="140" fixed="right" align="left" header-align="left">
       <template #default="{ row }">
         <div class="actions" @click.stop>
+          <el-tooltip v-if="canPreview(row)" :content="getPreviewActionLabel(row)" placement="top">
+            <el-button type="primary" link :icon="View" @click="openFilePreview(row)" />
+          </el-tooltip>
           <el-tooltip v-if="!row.isDir" content="下载" placement="top">
             <el-button type="primary" link :icon="Download" @click="downloadFile(row)" />
-          </el-tooltip>
-          <el-tooltip v-else-if="canPreview(row)" content="预览" placement="top">
-            <el-button type="primary" link :icon="View" @click="openFilePreview(row)" />
           </el-tooltip>
           <el-dropdown @command="handleDropdownCommand(row, $event)">
             <el-button type="primary" link :icon="MoreFilled" />
@@ -172,7 +176,7 @@ watch(() => props.selectionEnabled, enabled => {
               <el-dropdown-menu>
                 <el-dropdown-item command="detail">详情</el-dropdown-item>
                 <el-dropdown-item v-if="row.isDir" command="accessKey">授权密钥</el-dropdown-item>
-                <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
+                <el-dropdown-item v-if="canPreview(row)" command="preview">{{ getPreviewActionLabel(row) }}</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir && canShare(row)" command="share">创建链接</el-dropdown-item>
                 <el-dropdown-item v-if="canShare(row)" command="shareUser">分享</el-dropdown-item>
@@ -210,14 +214,17 @@ watch(() => props.selectionEnabled, enabled => {
         </div>
         <div class="card-actions card-actions-inline">
           <el-button v-if="row.isDir" size="small" circle :icon="View" @click="openDetailDrawer('file', row)" />
-          <el-button v-else size="small" :icon="Download" circle @click="downloadFile(row)" />
+          <template v-else>
+            <el-button size="small" circle :icon="View" @click="openFilePreview(row)" />
+            <el-button size="small" :icon="Download" circle @click="downloadFile(row)" />
+          </template>
           <el-dropdown @command="handleDropdownCommand(row, $event)">
             <el-button size="small" :icon="MoreFilled" circle />
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="detail">详情</el-dropdown-item>
                 <el-dropdown-item v-if="row.isDir" command="accessKey">授权密钥</el-dropdown-item>
-                <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
+                <el-dropdown-item v-if="canPreview(row)" command="preview">{{ getPreviewActionLabel(row) }}</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir && canShare(row)" command="share">创建链接</el-dropdown-item>
                 <el-dropdown-item v-if="canShare(row)" command="shareUser">分享</el-dropdown-item>

@@ -401,6 +401,11 @@ onBeforeUnmount(() => {
           预览
         </el-button>
       </div>
+      <div class="detail-actions" v-else>
+        <el-button type="primary" size="small" @click="openFilePreview(detailFile)">
+          选择格式打开
+        </el-button>
+      </div>
     </div>
 
     <div class="detail-panel" v-else-if="detailMode === 'recycle' && detailRecycle">
@@ -656,6 +661,14 @@ onBeforeUnmount(() => {
             @click="openFilePreview(detailSharedEntry)"
           >
             预览
+          </el-button>
+          <el-button
+            v-else-if="sharedCanRead"
+            type="primary"
+            size="small"
+            @click="openFilePreview(detailSharedEntry)"
+          >
+            选择格式打开
           </el-button>
         </template>
       </div>

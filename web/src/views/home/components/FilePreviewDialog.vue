@@ -54,7 +54,7 @@ const contentModel = computed({
 
 const canSave = computed(() => props.mode === 'text' && !props.readOnly)
 const canDownload = computed(() => props.mode !== 'text')
-const isDocx = computed(() => props.fileName.toLowerCase().endsWith('.docx'))
+const isDocx = computed(() => props.mode === 'word')
 const imageUrl = ref('')
 const imageScale = ref(1)
 const imageOffsetX = ref(0)
