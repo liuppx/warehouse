@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	warehousedocs "github.com/yeying-community/warehouse/docs"
 	"github.com/yeying-community/warehouse/internal/application/assetspace"
 	"github.com/yeying-community/warehouse/internal/domain/auth"
 	"github.com/yeying-community/warehouse/internal/domain/permission"
@@ -48,8 +47,6 @@ type WebDAVService struct {
 func (s *WebDAVService) SetPublicShareRepository(repo repository.ShareRepository) {
 	s.publicShareRepo = repo
 }
-
-const userGuideWebDAVFileName = "Warehouse 用户使用指南.md"
 
 type usedSpaceMutation struct {
 	method         string
@@ -204,7 +201,7 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 创建 WebDAV 处理器（使用自定义的 Unicode FileSystem）
-	unicodeFS := webdavfs.NewUnicodeFileSystemWithVirtualFiles(userDir, s.userGuideVirtualFiles())
+	unicodeFS := webdavfs.NewUnicodeFileSystem(userDir)
 	handler := &webdav.Handler{
 		Prefix:     s.config.WebDAV.Prefix,
 		FileSystem: unicodeFS,
@@ -285,43 +282,6 @@ func (s *WebDAVService) syncUserSharePathsForMove(ctx context.Context, u *user.U
 	fromPath := s.resolveUserFullPath(userDir, r.URL.Path)
 	toPath := s.resolveUserFullPath(userDir, destination)
 	return SyncAllSharePathsForOwnerMove(ctx, s.userShareRepo, s.publicShareRepo, s.config, u, fromPath, toPath)
-}
-
-func (s *WebDAVService) userGuideVirtualFiles() []webdavfs.VirtualFile {
-	content := []byte(warehousedocs.UserGuideMarkdown)
-	paths := []string{"/" + userGuideWebDAVFileName}
-	spaces := []assetspace.Space{
-		{Path: "/" + assetspace.PersonalSpaceKey},
-		{Path: "/" + assetspace.AppsSpaceKey},
-		{Path: "/" + assetspace.ServicesSpaceKey},
-	}
-	if s != nil && s.assetSpace != nil {
-		spaces = s.assetSpace.Spaces()
-	}
-	for _, space := range spaces {
-		spacePath := strings.TrimSpace(space.Path)
-		if spacePath == "" || spacePath == "/" {
-			continue
-		}
-		paths = append(paths, path.Join(spacePath, userGuideWebDAVFileName))
-	}
-
-	files := make([]webdavfs.VirtualFile, 0, len(paths))
-	seen := make(map[string]struct{}, len(paths))
-	for _, filePath := range paths {
-		filePath = path.Clean("/" + strings.TrimLeft(filePath, "/"))
-		if _, ok := seen[filePath]; ok {
-			continue
-		}
-		seen[filePath] = struct{}{}
-		files = append(files, webdavfs.VirtualFile{
-			Path:    filePath,
-			Content: content,
-			ModTime: warehousedocs.UserGuideModTime,
-			Mode:    0444,
-		})
-	}
-	return files
 }
 
 func (s *WebDAVService) clearWebDAVDeadlines(w http.ResponseWriter) {
