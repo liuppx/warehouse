@@ -180,6 +180,10 @@ build_artifacts() {
     echo "copy-for-upgrade script not found or not executable: ${ROOT_DIR}/scripts/copy-for-upgrade.sh" >&2
     exit 1
   fi
+  if [[ ! -x "${ROOT_DIR}/scripts/upgrade.sh" ]]; then
+    echo "upgrade script not found or not executable: ${ROOT_DIR}/scripts/upgrade.sh" >&2
+    exit 1
+  fi
   if [[ ! -f "${ROOT_DIR}/scripts/backup.conf.template" ]]; then
     echo "backup config template not found: ${ROOT_DIR}/scripts/backup.conf.template" >&2
     exit 1
@@ -215,6 +219,7 @@ create_package() {
   cp "${ROOT_DIR}/scripts/health-check.sh" "${staging_dir}/scripts/"
   cp "${ROOT_DIR}/scripts/test.sh" "${staging_dir}/scripts/"
   cp "${ROOT_DIR}/scripts/copy-for-upgrade.sh" "${staging_dir}/scripts/"
+  cp "${ROOT_DIR}/scripts/upgrade.sh" "${staging_dir}/scripts/"
   cp "${ROOT_DIR}/scripts/backup.conf.template" "${staging_dir}/scripts/"
   cp "${ROOT_DIR}/scripts/config_backup.sh" "${staging_dir}/scripts/"
   cp "${ROOT_DIR}/scripts/.passphrase-file.template" "${staging_dir}/scripts/"
