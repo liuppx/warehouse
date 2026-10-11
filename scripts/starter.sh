@@ -8,6 +8,8 @@ PID_DIR="${ROOT_DIR}/run"
 PID_FILE="${PID_DIR}/warehouse.pid"
 LOG_DIR="${ROOT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/warehouse.log"
+STOP_TIMEOUT_SECONDS="${STOP_TIMEOUT_SECONDS:-30}"
+FORCE_STOP_TIMEOUT_SECONDS="${FORCE_STOP_TIMEOUT_SECONDS:-5}"
 
 ACTION="${1:-start}"
 
@@ -20,10 +22,17 @@ is_running() {
     local pid
     pid=$(cat "${PID_FILE}")
     if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
-      return 0
+      local state
+      state="$(ps -p "${pid}" -o stat= 2>/dev/null | tr -d '[:space:]')"
+      [[ -n "${state}" && "${state:0:1}" != "Z" ]] && return 0
     fi
   fi
   return 1
+}
+
+validate_stop_timeouts() {
+  [[ "${STOP_TIMEOUT_SECONDS}" =~ ^[0-9]+$ ]] || { echo "Invalid STOP_TIMEOUT_SECONDS: ${STOP_TIMEOUT_SECONDS}" >&2; exit 1; }
+  [[ "${FORCE_STOP_TIMEOUT_SECONDS}" =~ ^[0-9]+$ ]] || { echo "Invalid FORCE_STOP_TIMEOUT_SECONDS: ${FORCE_STOP_TIMEOUT_SECONDS}" >&2; exit 1; }
 }
 
 start() {
@@ -53,6 +62,7 @@ start() {
 }
 
 stop() {
+  validate_stop_timeouts
   if ! is_running; then
     echo "warehouse not running"
     rm -f "${PID_FILE}"
@@ -61,25 +71,39 @@ stop() {
 
   local pid
   pid=$(cat "${PID_FILE}")
-  kill "${pid}" >/dev/null 2>&1 || true
+  kill -TERM "${pid}" >/dev/null 2>&1 || true
 
-  for _ in {1..20}; do
-    if ! kill -0 "${pid}" >/dev/null 2>&1; then
-      rm -f "${PID_FILE}"
-      echo "warehouse stopped"
-      return
+  local waited=0
+  while is_running; do
+    if (( waited >= STOP_TIMEOUT_SECONDS )); then
+      break
     fi
-    sleep 0.5
+    sleep 1
+    waited=$((waited + 1))
   done
 
-  echo "warehouse did not stop in time, sending SIGKILL" >&2
-  kill -9 "${pid}" >/dev/null 2>&1 || true
+  if is_running; then
+    echo "warehouse graceful stop timed out after ${STOP_TIMEOUT_SECONDS}s, sending SIGKILL" >&2
+    kill -KILL "${pid}" >/dev/null 2>&1 || true
+    waited=0
+    while is_running; do
+      if (( waited >= FORCE_STOP_TIMEOUT_SECONDS )); then
+        echo "warehouse process ${pid} did not exit after SIGKILL; refusing to start" >&2
+        return 1
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+  fi
+
   rm -f "${PID_FILE}"
   echo "warehouse stopped"
 }
 
 restart() {
-  stop
+  if ! stop; then
+    return 1
+  fi
   start
 }
 
