@@ -7,7 +7,7 @@
 | 文件 | 用途 | 常见执行方式 |
 | --- | --- | --- |
 | `config_backup.sh` | 备份当前部署目录下的配置文件，并生成加密压缩包 | `bash scripts/config_backup.sh` |
-| `copy-for-upgrade.sh` | 升级时把当前版本的 `config.yaml` 复制到目标版本目录 | `bash scripts/copy-for-upgrade.sh /path/to/target` |
+| `upgrade.sh` | 通过 `copy-config` 阶段把当前版本的 `config.yaml` 复制到目标版本目录，并执行其他升级钩子 | `bash scripts/upgrade.sh copy-config <current-dir> <target-dir>` |
 | `health-check.sh` | 执行 Warehouse 存活、就绪和依赖健康检查 | `bash scripts/health-check.sh --level readiness` |
 | `local.sh` | 基于现有 `config.yaml` 生成本地 active/standby 调试配置并启动服务 | `bash scripts/local.sh active` |
 | `merge.sh` | 同步分支、推送当前分支并辅助创建 GitHub Pull Request | `bash scripts/merge.sh` |
@@ -36,14 +36,14 @@
 - `1`：配置缺失、口令文件缺失、复制失败或加密失败。
 - `255`：目标备份文件已存在，脚本不会覆盖旧备份。
 
-## `copy-for-upgrade.sh`
+## `upgrade.sh` 的 `copy-config` 阶段
 
 用于升级过程中把当前版本配置复制到目标版本目录。
 
 用法：
 
 ```bash
-bash scripts/copy-for-upgrade.sh <target-dir>
+bash scripts/upgrade.sh copy-config <current-dir> <target-dir>
 ```
 
 行为：
