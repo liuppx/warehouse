@@ -41,3 +41,13 @@ build
 output/
 test-results/
 .tmp/
+
+# Project skill local task state
+.project-task.json
+.project-lifecycle.json
+.project-execution.json
+.project-execution/
+.project-task-*.json
+.project-lifecycle-*.json
+.project-execution-*.json
+.project-execution-*/
