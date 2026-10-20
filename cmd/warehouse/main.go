@@ -164,7 +164,7 @@ func parseFlags(args []string) *pflag.FlagSet {
 	flags := pflag.NewFlagSet("warehouse", pflag.ExitOnError)
 
 	// 基础选项
-	flags.StringP("config", "c", "", "Config file path")
+	flags.StringP("config", "c", "", "Config file path (default: config.yaml)")
 	flags.BoolP("version", "v", false, "Show version")
 	flags.BoolP("help", "h", false, "Show help")
 	flags.Bool("check-ready", false, "Run dependency readiness check and exit")
@@ -200,6 +200,10 @@ func parseFlags(args []string) *pflag.FlagSet {
 
 // loadConfig 加载配置
 func loadConfig(configFile string, flags *pflag.FlagSet) (*config.Config, error) {
+	if configFile == "" {
+		configFile = "config.yaml"
+	}
+
 	loader := config.NewLoader()
 	cfg, err := loader.Load(configFile, flags)
 	if err != nil {
@@ -282,7 +286,8 @@ func printHelp(flags *pflag.FlagSet) {
 	flags.PrintDefaults()
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  # Start with config file")
+	fmt.Println("  # Start with config.yaml in the current directory")
+	fmt.Println("  warehouse")
 	fmt.Println("  warehouse -c config.yaml")
 	fmt.Println()
 	fmt.Println("  # Start with explicit serve subcommand")

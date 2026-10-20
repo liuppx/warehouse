@@ -108,7 +108,13 @@ cp config.yaml.template config.yaml
 
 ### 4. 启动项目
 
-开发态最短启动方式：
+开发态最短启动方式（默认读取当前目录下的 `config.yaml`）：
+
+```bash
+go run ./cmd/warehouse
+```
+
+也可以显式指定配置文件：
 
 ```bash
 go run ./cmd/warehouse -c config.yaml
