@@ -61,7 +61,19 @@ package_make_root() {
   local unit="$1"
   [[ "$unit" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || package_fail "invalid unit id: $unit"
   PACKAGE_UNIT="$unit"
-  PACKAGE_NAME="${unit}-v${PACKAGE_VERSION}-${PACKAGE_SHORT_COMMIT}.tar.gz"
+  PACKAGE_UNIT_VERSION="$PACKAGE_VERSION"
+  local version_map="$PACKAGE_ROOT_DIR/scripts/artifact-versions.conf" map_unit map_version extra
+  local seen_units=" "
+  if [[ -f "$version_map" ]]; then
+    while read -r map_unit map_version extra || [[ -n "${map_unit:-}" ]]; do
+      [[ -z "${map_unit:-}" || "$map_unit" == \#* ]] && continue
+      [[ -z "${extra:-}" && "$map_unit" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && "$map_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || package_fail "invalid entry in $version_map"
+      case "$seen_units" in *" $map_unit "*) package_fail "duplicate unit in $version_map: $map_unit";; esac
+      seen_units="$seen_units$map_unit "
+      [[ "$map_unit" != "$unit" ]] || PACKAGE_UNIT_VERSION="$map_version"
+    done < "$version_map"
+  fi
+  PACKAGE_NAME="${unit}-v${PACKAGE_UNIT_VERSION}-${PACKAGE_SHORT_COMMIT}.tar.gz"
   PACKAGE_ROOT_NAME="${PACKAGE_NAME%.tar.gz}"
   PACKAGE_DIR="$PACKAGE_STAGE/$PACKAGE_ROOT_NAME"
   mkdir -p "$PACKAGE_DIR"
@@ -90,9 +102,9 @@ package_finish_artifact() {
   else checksum="$(shasum -a 256 "$PACKAGE_STAGE/$PACKAGE_NAME" | awk '{print $1}')"
   fi
   if [[ "$type" == static ]]; then
-    artifact_json="$(jq -cnS --arg unit "$PACKAGE_UNIT" --arg version "$PACKAGE_VERSION" --arg package "$PACKAGE_NAME" --arg sha "$checksum" --arg root "$PACKAGE_ROOT_NAME" --arg site "$PACKAGE_UNIT" --arg health "$PACKAGE_HEALTH_PATH" '{unit_id:$unit,type:"static",version:$version,package:$package,sha256:$sha,package_root:$root,static_targets:[{site_id:$site,path:("/opt/deploy/static/"+$site),health_check_path:$health}]}')"
+    artifact_json="$(jq -cnS --arg unit "$PACKAGE_UNIT" --arg version "$PACKAGE_UNIT_VERSION" --arg package "$PACKAGE_NAME" --arg sha "$checksum" --arg root "$PACKAGE_ROOT_NAME" --arg site "$PACKAGE_UNIT" --arg health "$PACKAGE_HEALTH_PATH" '{unit_id:$unit,type:"static",version:$version,package:$package,sha256:$sha,package_root:$root,static_targets:[{site_id:$site,path:("/opt/deploy/static/"+$site),health_check_path:$health}]}')"
   else
-    artifact_json="$(jq -cnS --arg unit "$PACKAGE_UNIT" --arg type "$type" --arg version "$PACKAGE_VERSION" --arg package "$PACKAGE_NAME" --arg sha "$checksum" --arg root "$PACKAGE_ROOT_NAME" '{unit_id:$unit,type:$type,version:$version,package:$package,sha256:$sha,package_root:$root}')"
+    artifact_json="$(jq -cnS --arg unit "$PACKAGE_UNIT" --arg type "$type" --arg version "$PACKAGE_UNIT_VERSION" --arg package "$PACKAGE_NAME" --arg sha "$checksum" --arg root "$PACKAGE_ROOT_NAME" '{unit_id:$unit,type:$type,version:$version,package:$package,sha256:$sha,package_root:$root}')"
   fi
   printf '%s\n' "$artifact_json" >> "$PACKAGE_ARTIFACTS"
 }
@@ -122,5 +134,5 @@ package_copy_scripts() {
 
 package_strip_build_files() {
   local package_dir="$1"
-  rm -f "$package_dir/scripts/package.sh" "$package_dir/scripts/package-common.sh" "$package_dir/scripts/package-api.json"
+  rm -f "$package_dir/scripts/package.sh" "$package_dir/scripts/package-common.sh" "$package_dir/scripts/package-api.json" "$package_dir/scripts/artifact-versions.conf" "$package_dir/scripts/version-files.conf" "$package_dir/scripts/tag.sh"
 }
