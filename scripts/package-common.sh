@@ -7,6 +7,7 @@ PACKAGE_REF=""
 PACKAGE_VERSION=""
 PACKAGE_OUTPUT_DIR=""
 PACKAGE_COMMIT=""
+PACKAGE_SOURCE_COMMIT=""
 PACKAGE_SHORT_COMMIT=""
 PACKAGE_STAGE=""
 PACKAGE_ARTIFACTS=""
@@ -19,23 +20,24 @@ package_common_init() {
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --ref|--version|--output-dir)
+      --ref|--source-commit|--version|--output-dir)
         [[ $# -ge 2 && -n "$2" ]] || package_fail "$1 requires a value"
         case "$1" in
           --ref) PACKAGE_REF="$2" ;;
+          --source-commit) PACKAGE_SOURCE_COMMIT="$2" ;;
           --version) PACKAGE_VERSION="$2" ;;
           --output-dir) PACKAGE_OUTPUT_DIR="$2" ;;
         esac
         shift 2
         ;;
       -h|--help)
-        printf 'Usage: scripts/package.sh --ref COMMIT --version MAJOR.MINOR.PATCH --output-dir DIR\n'
+        printf 'Usage: scripts/package.sh --ref TAG_COMMIT --source-commit MAIN_COMMIT --version MAJOR.MINOR.PATCH --output-dir DIR\n'
         exit 0
         ;;
       *) package_fail "unsupported argument: $1" ;;
     esac
   done
-  [[ -n "$PACKAGE_REF" && -n "$PACKAGE_VERSION" && -n "$PACKAGE_OUTPUT_DIR" ]] || package_fail 'all of --ref, --version, and --output-dir are required'
+  [[ -n "$PACKAGE_REF" && -n "$PACKAGE_SOURCE_COMMIT" && -n "$PACKAGE_VERSION" && -n "$PACKAGE_OUTPUT_DIR" ]] || package_fail 'all of --ref, --source-commit, --version, and --output-dir are required'
   [[ "$PACKAGE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || package_fail "version must be MAJOR.MINOR.PATCH: $PACKAGE_VERSION"
   command -v git >/dev/null 2>&1 || package_fail 'git is required'
   command -v jq >/dev/null 2>&1 || package_fail 'jq is required'
@@ -46,8 +48,10 @@ package_common_init() {
   fi
   PACKAGE_COMMIT="$(git -C "$PACKAGE_ROOT_DIR" rev-parse --verify "${PACKAGE_REF}^{commit}")" || package_fail "ref is not a commit: $PACKAGE_REF"
   [[ "$(git -C "$PACKAGE_ROOT_DIR" rev-parse HEAD)" == "$PACKAGE_COMMIT" ]] || package_fail 'source checkout does not match --ref'
+  PACKAGE_SOURCE_COMMIT="$(git -C "$PACKAGE_ROOT_DIR" rev-parse --verify "${PACKAGE_SOURCE_COMMIT}^{commit}")" || package_fail "source commit is not a commit: $PACKAGE_SOURCE_COMMIT"
+  git -C "$PACKAGE_ROOT_DIR" merge-base --is-ancestor "$PACKAGE_SOURCE_COMMIT" "$PACKAGE_COMMIT" || package_fail '--source-commit must be an ancestor of --ref'
   [[ -z "$(git -C "$PACKAGE_ROOT_DIR" status --porcelain --untracked-files=all)" ]] || package_fail 'source checkout must be clean'
-  PACKAGE_SHORT_COMMIT="${PACKAGE_COMMIT:0:7}"
+  PACKAGE_SHORT_COMMIT="${PACKAGE_SOURCE_COMMIT:0:7}"
   mkdir -p "$PACKAGE_OUTPUT_DIR"
   PACKAGE_OUTPUT_DIR="$(cd "$PACKAGE_OUTPUT_DIR" && pwd -P)"
   [[ -z "$(find "$PACKAGE_OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]] || package_fail 'output directory must be empty; refusing to overwrite files'
@@ -111,7 +115,7 @@ package_finish_artifact() {
 
 package_finish() {
   [[ -s "$PACKAGE_ARTIFACTS" ]] || package_fail 'no artifacts were created'
-  jq -cnS --arg repository "$PACKAGE_REPOSITORY" --arg commit "$PACKAGE_COMMIT" --slurpfile artifacts "$PACKAGE_ARTIFACTS" '{schema_version:1,repository:$repository,source_commit:$commit,artifacts:$artifacts}' > "$PACKAGE_STAGE/release-manifest.json"
+  jq -cnS --arg repository "$PACKAGE_REPOSITORY" --arg commit "$PACKAGE_SOURCE_COMMIT" --slurpfile artifacts "$PACKAGE_ARTIFACTS" '{schema_version:1,repository:$repository,source_commit:$commit,artifacts:$artifacts}' > "$PACKAGE_STAGE/release-manifest.json"
   for file in "$PACKAGE_STAGE"/*.tar.gz "$PACKAGE_STAGE/release-manifest.json"; do
     [[ -f "$file" ]] || continue
     [[ ! -e "$PACKAGE_OUTPUT_DIR/$(basename "$file")" ]] || package_fail "refusing to overwrite: $(basename "$file")"
