@@ -1219,6 +1219,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/public/share/directory/{token}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出公开目录分享的直接子项
+         * @description 匿名只读接口。path 是分享根目录内的相对目录路径；每页最多返回 200 项。符号链接不会出现在列表中。
+         */
+        get: operations["listPublicShareDirectoryEntries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/share/directory/{token}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 下载公开目录分享中的文件
+         * @description 匿名只读接口。path 必须指向分享根目录内的普通文件；越界路径和符号链接访问会被拒绝。
+         */
+        get: operations["downloadPublicShareDirectoryFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/share/user/create": {
         parameters: {
             query?: never;
@@ -2076,6 +2116,7 @@ export interface components {
             token: string;
             name: string;
             path: string;
+            isDir: boolean;
             /** @enum {string} */
             mode: "download" | "preview";
             /** Format: uri */
@@ -4153,6 +4194,80 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: components["responses"]["PlainTextError"];
+            410: components["responses"]["PlainTextError"];
+        };
+    };
+    listPublicShareDirectoryEntries: {
+        parameters: {
+            query?: {
+                /** @description 分享目录内的相对路径，根目录为空 */
+                path?: string;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前目录的直接子项 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description 分享根目录名称 */
+                        name: string;
+                        /** @description 当前相对目录路径 */
+                        path: string;
+                        entries: {
+                            name: string;
+                            /** @description 相对分享根目录的路径 */
+                            path: string;
+                            isDir: boolean;
+                            /** Format: int64 */
+                            size: number;
+                            /** Format: date-time */
+                            modified: string;
+                        }[];
+                        offset: number;
+                        limit: number;
+                        hasMore: boolean;
+                    };
+                };
+            };
+            404: components["responses"]["PlainTextError"];
+            410: components["responses"]["PlainTextError"];
+        };
+    };
+    downloadPublicShareDirectoryFile: {
+        parameters: {
+            query: {
+                /** @description 分享根目录内的相对文件路径 */
+                path: string;
+            };
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件内容 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
             };
             404: components["responses"]["PlainTextError"];
             410: components["responses"]["PlainTextError"];

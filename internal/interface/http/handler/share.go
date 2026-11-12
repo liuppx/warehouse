@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
@@ -89,8 +91,9 @@ func (h *ShareHandler) writeShareCreateResponse(w http.ResponseWriter, r *http.R
 		"token":         item.Token,
 		"name":          item.Name,
 		"path":          item.Path,
+		"isDir":         item.IsDir,
 		"mode":          item.Mode,
-		"url":           h.buildShareURL(r, item.Token, item.Name),
+		"url":           h.buildShareURL(r, item.Token, item.Name, item.IsDir),
 		"viewCount":     item.ViewCount,
 		"downloadCount": item.DownloadCount,
 	}
@@ -171,6 +174,7 @@ func (h *ShareHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 		DownloadCount int64  `json:"downloadCount"`
 		ExpiresAt     string `json:"expiresAt,omitempty"`
 		CreatedAt     string `json:"createdAt"`
+		IsDir         bool   `json:"isDir"`
 	}
 
 	resp := struct {
@@ -184,8 +188,9 @@ func (h *ShareHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 			Token:         item.Token,
 			Name:          item.Name,
 			Path:          item.Path,
+			IsDir:         item.IsDir,
 			Mode:          item.Mode,
-			URL:           h.buildShareURL(r, item.Token, item.Name),
+			URL:           h.buildShareURL(r, item.Token, item.Name, item.IsDir),
 			ViewCount:     item.ViewCount,
 			DownloadCount: item.DownloadCount,
 			CreatedAt:     item.CreatedAt.Format(timeLayout),
@@ -262,24 +267,28 @@ func (h *ShareHandler) HandleAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, file, info, err := h.shareService.Resolve(r.Context(), token)
+	metadata, err := h.shareService.ResolveMetadata(r.Context(), token)
 	if err != nil {
-		if err == share.ErrShareNotFound || err == share.ErrInvalidShare || errors.Is(err, os.ErrNotExist) {
+		h.writePublicShareError(w, r, err)
+		return
+	}
+	if metadata.IsDir {
+		if hasFilename {
 			http.NotFound(w, r)
 			return
 		}
-		if err == share.ErrShareExpired {
-			http.Error(w, "share expired", http.StatusGone)
-			return
-		}
-		h.logger.Error("failed to resolve share", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Redirect(w, r, "/share/"+url.PathEscape(token), http.StatusFound)
+		return
+	}
+	item, file, info, err := h.shareService.Resolve(r.Context(), token)
+	if err != nil {
+		h.writePublicShareError(w, r, err)
 		return
 	}
 	defer file.Close()
 
 	if !hasFilename {
-		location := h.buildShareURL(r, item.Token, item.Name)
+		location := h.buildShareURL(r, item.Token, item.Name, item.IsDir)
 		if r.URL.RawQuery != "" {
 			location += "?" + r.URL.RawQuery
 		}
@@ -303,7 +312,87 @@ func (h *ShareHandler) HandleAccess(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, item.Name, info.ModTime(), file)
 }
 
-func (h *ShareHandler) buildShareURL(r *http.Request, token, fileName string) string {
+func (h *ShareHandler) HandleDirectoryAccess(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/public/share/directory/"), "/")
+	parts := strings.SplitN(trimmed, "/", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		http.NotFound(w, r)
+		return
+	}
+	token, action := parts[0], parts[1]
+	w.Header().Set("Cache-Control", "no-store")
+	switch action {
+	case "entries":
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		item, entries, hasMore, err := h.shareService.ResolvePublicDirectory(r.Context(), token, r.URL.Query().Get("path"), offset, limit)
+		if err != nil {
+			h.writePublicShareError(w, r, err)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Get("path") == "" && offset == 0 {
+			_ = h.shareService.IncrementView(r.Context(), token)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Name    string                     `json:"name"`
+			Path    string                     `json:"path"`
+			Entries []service.PublicShareEntry `json:"entries"`
+			Offset  int                        `json:"offset"`
+			Limit   int                        `json:"limit"`
+			HasMore bool                       `json:"hasMore"`
+		}{Name: item.Name, Path: r.URL.Query().Get("path"), Entries: entries, Offset: max(0, offset), Limit: normalizedShareLimit(limit), HasMore: hasMore})
+	case "download":
+		relativePath := r.URL.Query().Get("path")
+		if relativePath == "" {
+			http.NotFound(w, r)
+			return
+		}
+		item, file, info, err := h.shareService.ResolvePublicFile(r.Context(), token, relativePath)
+		if err != nil {
+			h.writePublicShareError(w, r, err)
+			return
+		}
+		defer file.Close()
+		if shouldCountAccess(r) && r.Method == http.MethodGet {
+			_ = h.shareService.IncrementDownload(r.Context(), token)
+		}
+		if item.IsPreviewMode() {
+			setInlineContentDisposition(w, filepath.Base(relativePath))
+		} else {
+			setAttachmentContentDisposition(w, filepath.Base(relativePath))
+		}
+		http.ServeContent(w, r, filepath.Base(relativePath), info.ModTime(), file)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func normalizedShareLimit(limit int) int {
+	if limit <= 0 || limit > 200 {
+		return 100
+	}
+	return limit
+}
+
+func (h *ShareHandler) writePublicShareError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, share.ErrShareNotFound) || errors.Is(err, share.ErrInvalidShare) || errors.Is(err, os.ErrNotExist) {
+		http.NotFound(w, r)
+		return
+	}
+	if errors.Is(err, share.ErrShareExpired) {
+		http.Error(w, "share expired", http.StatusGone)
+		return
+	}
+	h.logger.Error("failed to resolve share", zap.Error(err))
+	http.Error(w, "Internal server error", http.StatusInternalServerError)
+}
+
+func (h *ShareHandler) buildShareURL(r *http.Request, token, fileName string, isDir bool) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
@@ -314,6 +403,9 @@ func (h *ShareHandler) buildShareURL(r *http.Request, token, fileName string) st
 	host := r.Host
 	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
 		host = forwardedHost
+	}
+	if isDir {
+		return scheme + "://" + host + "/share/" + url.PathEscape(token)
 	}
 	if strings.TrimSpace(fileName) == "" {
 		return scheme + "://" + host + "/api/v1/public/share/" + token

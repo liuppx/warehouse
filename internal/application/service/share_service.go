@@ -55,6 +55,14 @@ type ShareCreateInput struct {
 	Mode   string
 }
 
+type PublicShareEntry struct {
+	Name     string    `json:"name"`
+	Path     string    `json:"path"`
+	IsDir    bool      `json:"isDir"`
+	Size     int64     `json:"size"`
+	Modified time.Time `json:"modified"`
+}
+
 // CreateFromReceivedResource creates a public file link only while the
 // recipient retains effective read access to the V3 resource. The access is
 // rechecked whenever the public link is resolved.
@@ -113,10 +121,6 @@ func (s *ShareService) Create(ctx context.Context, u *user.User, rawPath string,
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("directory sharing not supported")
-	}
-
 	name := filepath.Base(fullPath)
 	expiresAt, err := input.Expiry.Resolve(time.Now())
 	if err != nil {
@@ -128,6 +132,7 @@ func (s *ShareService) Create(ctx context.Context, u *user.User, rawPath string,
 	}
 
 	item := share.NewShareItem(u.ID, u.Username, cleanPath, name, mode, expiresAt)
+	item.IsDir = info.IsDir()
 	if err := s.shareRepo.Create(ctx, item); err != nil {
 		return nil, err
 	}
@@ -216,52 +221,64 @@ func (s *ShareService) IncrementDownload(ctx context.Context, token string) erro
 }
 
 // Resolve 根据 token 获取分享文件
-func (s *ShareService) Resolve(ctx context.Context, token string) (*share.ShareItem, *os.File, os.FileInfo, error) {
+func (s *ShareService) activeShare(ctx context.Context, token string) (*share.ShareItem, *user.User, string, error) {
 	item, err := s.shareRepo.GetByToken(ctx, token)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, "", err
 	}
 	if item.IsExpired() {
-		return nil, nil, nil, share.ErrShareExpired
+		return nil, nil, "", share.ErrShareExpired
 	}
 	if item.SourceShareID != "" {
 		if s.shareUserService == nil {
-			return nil, nil, nil, share.ErrInvalidShare
+			return nil, nil, "", share.ErrInvalidShare
 		}
 		creator, err := s.userRepo.FindByID(ctx, item.CreatorUserID)
 		if err != nil {
-			return nil, nil, nil, share.ErrInvalidShare
+			return nil, nil, "", share.ErrInvalidShare
 		}
 		source, _, err := s.shareUserService.ResolveForTarget(ctx, creator, item.SourceShareID, "read")
 		if err != nil || !user.ParsePermissions(source.Permissions).Read {
-			return nil, nil, nil, share.ErrInvalidShare
+			return nil, nil, "", share.ErrInvalidShare
 		}
 	}
 	if item.SourceResourceID != "" {
 		if s.sharedResourceAccess == nil {
-			return nil, nil, nil, share.ErrInvalidShare
+			return nil, nil, "", share.ErrInvalidShare
 		}
 		creator, err := s.userRepo.FindByID(ctx, item.CreatorUserID)
 		if err != nil {
-			return nil, nil, nil, share.ErrInvalidShare
+			return nil, nil, "", share.ErrInvalidShare
 		}
 		if _, err := s.sharedResourceAccess.Authorize(ctx, item.SourceResourceID, creator.ID, "read", time.Now()); err != nil {
-			return nil, nil, nil, share.ErrInvalidShare
+			return nil, nil, "", share.ErrInvalidShare
 		}
 	}
 
 	u, err := s.userRepo.FindByID(ctx, item.UserID)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to get user: %w", err)
+		return nil, nil, "", fmt.Errorf("failed to get user: %w", err)
 	}
 
 	normalized, err := s.normalizeItemPath(item.Path)
 	if err != nil {
-		return nil, nil, nil, share.ErrInvalidShare
+		return nil, nil, "", share.ErrInvalidShare
 	}
 	item.Path = normalized
-	fullPath := s.resolveFullPath(u, normalized)
-	f, err := os.Open(fullPath)
+	rootPath := s.resolveFullPath(u, normalized)
+	return item, u, rootPath, nil
+}
+
+// Resolve 根据 token 获取分享文件。
+func (s *ShareService) Resolve(ctx context.Context, token string) (*share.ShareItem, *os.File, os.FileInfo, error) {
+	item, _, rootPath, err := s.activeShare(ctx, token)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if item.IsDir {
+		return nil, nil, nil, share.ErrInvalidShare
+	}
+	f, err := os.Open(rootPath)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -270,11 +287,146 @@ func (s *ShareService) Resolve(ctx context.Context, token string) (*share.ShareI
 		f.Close()
 		return nil, nil, nil, err
 	}
-	if info.IsDir() {
+	if !info.Mode().IsRegular() {
 		f.Close()
 		return nil, nil, nil, share.ErrInvalidShare
 	}
 	return item, f, info, nil
+}
+
+func (s *ShareService) ResolveMetadata(ctx context.Context, token string) (*share.ShareItem, error) {
+	item, _, _, err := s.activeShare(ctx, token)
+	return item, err
+}
+
+// ResolvePublicDirectory returns a paginated, direct-child listing for a public directory share.
+func (s *ShareService) ResolvePublicDirectory(ctx context.Context, token, relativePath string, offset, limit int) (*share.ShareItem, []PublicShareEntry, bool, error) {
+	item, _, rootPath, err := s.activeShare(ctx, token)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if !item.IsDir {
+		return nil, nil, false, share.ErrInvalidShare
+	}
+	directory, err := resolvePublicSharePath(rootPath, relativePath)
+	if err != nil {
+		return nil, nil, false, share.ErrInvalidShare
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if !info.IsDir() {
+		return nil, nil, false, share.ErrInvalidShare
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	result := make([]PublicShareEntry, 0, limit)
+	seen := 0
+	hasMore := false
+	for _, entry := range entries {
+		entryInfo, err := entry.Info()
+		if err != nil || entryInfo.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if !entryInfo.IsDir() && !entryInfo.Mode().IsRegular() {
+			continue
+		}
+		if seen < offset {
+			seen++
+			continue
+		}
+		if len(result) == limit {
+			hasMore = true
+			break
+		}
+		entryPath := path.Join(relativePath, entry.Name())
+		result = append(result, PublicShareEntry{
+			Name: entry.Name(), Path: entryPath, IsDir: entryInfo.IsDir(),
+			Size: entryInfo.Size(), Modified: entryInfo.ModTime(),
+		})
+		seen++
+	}
+	return item, result, hasMore, nil
+}
+
+// ResolvePublicFile opens a regular file within the root of a directory share.
+func (s *ShareService) ResolvePublicFile(ctx context.Context, token, relativePath string) (*share.ShareItem, *os.File, os.FileInfo, error) {
+	item, _, rootPath, err := s.activeShare(ctx, token)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if !item.IsDir {
+		return nil, nil, nil, share.ErrInvalidShare
+	}
+	targetPath, err := resolvePublicSharePath(rootPath, relativePath)
+	if err != nil {
+		return nil, nil, nil, share.ErrInvalidShare
+	}
+	f, err := os.Open(targetPath)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, nil, nil, share.ErrInvalidShare
+	}
+	return item, f, info, nil
+}
+
+func resolvePublicSharePath(rootPath, relativePath string) (string, error) {
+	if filepath.IsAbs(relativePath) || strings.Contains(relativePath, "\\") {
+		return "", share.ErrInvalidShare
+	}
+	for _, segment := range strings.Split(relativePath, "/") {
+		if segment == ".." {
+			return "", share.ErrInvalidShare
+		}
+	}
+	clean := path.Clean(relativePath)
+	if clean == "." {
+		clean = ""
+	}
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", share.ErrInvalidShare
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(rootPath)
+	if err != nil {
+		return "", err
+	}
+	target := resolvedRoot
+	if clean != "" {
+		target = filepath.Join(resolvedRoot, filepath.FromSlash(clean))
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", err
+	}
+	if !pathWithinDirectory(resolvedRoot, resolvedTarget) {
+		return "", share.ErrInvalidShare
+	}
+	return resolvedTarget, nil
+}
+
+func pathWithinDirectory(root, target string) bool {
+	relative, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
 }
 
 func (s *ShareService) resolveFullPath(u *user.User, sharePath string) string {

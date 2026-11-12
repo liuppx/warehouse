@@ -30,6 +30,7 @@ type ShareItem struct {
 	Username         string
 	Name             string
 	Path             string
+	IsDir            bool
 	Mode             string
 	ExpiresAt        *time.Time
 	ViewCount        int64

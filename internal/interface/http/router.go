@@ -234,6 +234,7 @@ func (r *Router) Setup() http.Handler {
 	mux.Handle("/api/v1/public/share/create-from-resource", r.createAuthenticatedHandler(http.HandlerFunc(r.shareHandler.HandleCreateFromReceivedResource)))
 	mux.Handle("/api/v1/public/share/list", r.createAuthenticatedHandler(http.HandlerFunc(r.shareHandler.HandleList)))
 	mux.Handle("/api/v1/public/share/revoke", r.createAuthenticatedHandler(http.HandlerFunc(r.shareHandler.HandleRevoke)))
+	mux.HandleFunc("/api/v1/public/share/directory/", r.shareHandler.HandleDirectoryAccess)
 	mux.HandleFunc("/api/v1/public/share/", r.shareHandler.HandleAccess)
 
 	// 定向分享路由（需要认证）

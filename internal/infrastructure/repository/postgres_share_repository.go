@@ -37,8 +37,8 @@ func NewPostgresShareRepository(db *sql.DB) *PostgresShareRepository {
 // Create 创建分享记录
 func (r *PostgresShareRepository) Create(ctx context.Context, item *share.ShareItem) error {
 	query := `
-		INSERT INTO share_items (id, token, user_id, creator_user_id, source_share_id, source_resource_id, username, name, path, mode, expires_at, view_count, download_count, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		INSERT INTO share_items (id, token, user_id, creator_user_id, source_share_id, source_resource_id, username, name, path, is_dir, mode, expires_at, view_count, download_count, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`
 	_, err := r.db.ExecContext(ctx, query,
 		item.ID,
@@ -50,6 +50,7 @@ func (r *PostgresShareRepository) Create(ctx context.Context, item *share.ShareI
 		item.Username,
 		item.Name,
 		item.Path,
+		item.IsDir,
 		item.Mode,
 		item.ExpiresAt,
 		item.ViewCount,
@@ -65,7 +66,7 @@ func (r *PostgresShareRepository) Create(ctx context.Context, item *share.ShareI
 // GetByToken 根据 token 获取分享记录
 func (r *PostgresShareRepository) GetByToken(ctx context.Context, token string) (*share.ShareItem, error) {
 	query := `
-		SELECT id, token, user_id, creator_user_id, COALESCE(source_share_id, ''), COALESCE(source_resource_id, ''), username, name, path, mode, expires_at, view_count, download_count, created_at
+		SELECT id, token, user_id, creator_user_id, COALESCE(source_share_id, ''), COALESCE(source_resource_id, ''), username, name, path, is_dir, mode, expires_at, view_count, download_count, created_at
 		FROM share_items
 		WHERE token = $1
 	`
@@ -81,6 +82,7 @@ func (r *PostgresShareRepository) GetByToken(ctx context.Context, token string) 
 		&item.Username,
 		&item.Name,
 		&item.Path,
+		&item.IsDir,
 		&item.Mode,
 		&expiresAt,
 		&item.ViewCount,
@@ -103,7 +105,7 @@ func (r *PostgresShareRepository) GetByToken(ctx context.Context, token string) 
 // GetByUserID 获取用户的分享列表
 func (r *PostgresShareRepository) GetByUserID(ctx context.Context, userID string) ([]*share.ShareItem, error) {
 	query := `
-		SELECT id, token, user_id, creator_user_id, COALESCE(source_share_id, ''), COALESCE(source_resource_id, ''), username, name, path, mode, expires_at, view_count, download_count, created_at
+		SELECT id, token, user_id, creator_user_id, COALESCE(source_share_id, ''), COALESCE(source_resource_id, ''), username, name, path, is_dir, mode, expires_at, view_count, download_count, created_at
 		FROM share_items
 		WHERE creator_user_id = $1
 		ORDER BY created_at DESC
@@ -128,6 +130,7 @@ func (r *PostgresShareRepository) GetByUserID(ctx context.Context, userID string
 			&item.Username,
 			&item.Name,
 			&item.Path,
+			&item.IsDir,
 			&item.Mode,
 			&expiresAt,
 			&item.ViewCount,

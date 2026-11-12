@@ -3319,9 +3319,8 @@ async function submitRename() {
 }
 
 async function shareFile(item: FileItem) {
-  if (item.isDir) return
   if (isEncryptedItem(item)) {
-    showError('加密目录文件暂不支持公开分享')
+    showError('加密文件或目录暂不支持公开分享')
     return
   }
   shareLinkTarget.value = item
@@ -3359,7 +3358,7 @@ async function submitShareLink() {
     const data = shareLinkResourceContext.value
       ? await shareApi.createFromReceivedResource({ ...shareLinkResourceContext.value, ...expiryPayload, mode: shareLinkForm.value.mode })
       : await shareApi.create(shareLinkTarget.value.path, { ...expiryPayload, mode: shareLinkForm.value.mode })
-    const url = data.url || `${window.location.origin}/api/v1/public/share/${data.token}`
+    const url = data.url || `${window.location.origin}${data.isDir ? `/share/${data.token}` : `/api/v1/public/share/${data.token}`}`
     await copyText(url, '分享链接已复制')
     shareLinkDialogVisible.value = false
     shareLinkResourceContext.value = null
@@ -5105,12 +5104,12 @@ async function revokeDirectShare(item: DirectShareItem) {
 }
 
 async function copyShareLink(item: ShareItem) {
-  const url = item.url || `${window.location.origin}/api/v1/public/share/${item.token}`
+  const url = item.url || `${window.location.origin}${item.isDir ? `/share/${item.token}` : `/api/v1/public/share/${item.token}`}`
   await copyText(url, '分享链接已复制')
 }
 
 function getShareLink(item: ShareItem): string {
-  return item.url || `${window.location.origin}/api/v1/public/share/${item.token}`
+  return item.url || `${window.location.origin}${item.isDir ? `/share/${item.token}` : `/api/v1/public/share/${item.token}`}`
 }
 
 function formatShareMode(mode?: ShareMode | string): string {

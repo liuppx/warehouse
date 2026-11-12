@@ -363,6 +363,7 @@ export const shareApi = {
       token: string
       name: string
       path: string
+      isDir: boolean
       mode: ShareMode
       url: string
       viewCount: number
@@ -385,6 +386,7 @@ export const shareApi = {
       token: string
       name: string
       path: string
+      isDir: boolean
       mode: ShareMode
       url: string
       viewCount: number
@@ -397,6 +399,23 @@ export const shareApi = {
     return request<{
       items: ShareItem[]
     }>('/api/v1/public/share/list')
+  },
+
+  publicDirectoryEntries(token: string, path = '', offset = 0, limit = 100) {
+    const query = new URLSearchParams({ path, offset: String(offset), limit: String(limit) })
+    return request<{
+      name: string
+      path: string
+      entries: Array<{ name: string; path: string; isDir: boolean; size: number; modified: string }>
+      offset: number
+      limit: number
+      hasMore: boolean
+    }>(`/api/v1/public/share/directory/${encodeURIComponent(token)}/entries?${query.toString()}`)
+  },
+
+  publicDirectoryDownloadURL(token: string, path: string) {
+    const query = new URLSearchParams({ path })
+    return `${API_BASE}/api/v1/public/share/directory/${encodeURIComponent(token)}/download?${query.toString()}`
   },
 
   revoke(token: string) {

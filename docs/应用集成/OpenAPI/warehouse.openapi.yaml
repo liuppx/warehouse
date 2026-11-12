@@ -1443,6 +1443,64 @@ paths:
         "404": {$ref: "#/components/responses/PlainTextError"}
         "410": {$ref: "#/components/responses/PlainTextError"}
 
+  /api/v1/public/share/directory/{token}/entries:
+    get:
+      tags: [Public shares]
+      operationId: listPublicShareDirectoryEntries
+      summary: 列出公开目录分享的直接子项
+      description: 匿名只读接口。path 是分享根目录内的相对目录路径；每页最多返回 200 项。符号链接不会出现在列表中。
+      security: []
+      parameters:
+        - {name: token, in: path, required: true, schema: {type: string}}
+        - {name: path, in: query, required: false, schema: {type: string}, description: 分享目录内的相对路径，根目录为空}
+        - {name: offset, in: query, required: false, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 100}}
+      responses:
+        "200":
+          description: 当前目录的直接子项
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name, path, entries, offset, limit, hasMore]
+                properties:
+                  name: {type: string, description: 分享根目录名称}
+                  path: {type: string, description: 当前相对目录路径}
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, path, isDir, size, modified]
+                      properties:
+                        name: {type: string}
+                        path: {type: string, description: 相对分享根目录的路径}
+                        isDir: {type: boolean}
+                        size: {type: integer, format: int64}
+                        modified: {type: string, format: date-time}
+                  offset: {type: integer}
+                  limit: {type: integer}
+                  hasMore: {type: boolean}
+        "404": {$ref: "#/components/responses/PlainTextError"}
+        "410": {$ref: "#/components/responses/PlainTextError"}
+
+  /api/v1/public/share/directory/{token}/download:
+    get:
+      tags: [Public shares]
+      operationId: downloadPublicShareDirectoryFile
+      summary: 下载公开目录分享中的文件
+      description: 匿名只读接口。path 必须指向分享根目录内的普通文件；越界路径和符号链接访问会被拒绝。
+      security: []
+      parameters:
+        - {name: token, in: path, required: true, schema: {type: string}}
+        - {name: path, in: query, required: true, schema: {type: string, minLength: 1}, description: 分享根目录内的相对文件路径}
+      responses:
+        "200":
+          description: 文件内容
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        "404": {$ref: "#/components/responses/PlainTextError"}
+        "410": {$ref: "#/components/responses/PlainTextError"}
   /api/v1/public/share/user/create:
     post:
       tags: [Directed shares]
@@ -2577,11 +2635,12 @@ components:
             mode: {type: string, enum: [download, preview], default: download}
     PublicShare:
       type: object
-      required: [token, name, path, mode, url, viewCount, downloadCount]
+      required: [token, name, path, isDir, mode, url, viewCount, downloadCount]
       properties:
         token: {type: string}
         name: {type: string}
         path: {type: string}
+        isDir: {type: boolean}
         mode: {type: string, enum: [download, preview]}
         url: {type: string, format: uri}
         viewCount: {type: integer, format: int64, minimum: 0}
