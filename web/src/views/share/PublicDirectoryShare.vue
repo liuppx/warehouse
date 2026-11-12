@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, Download, Document, Folder, Refresh } from '@element-plus/icons-vue'
-import { shareApi } from '@/api'
+import { shareApi, type ShareMode } from '@/api'
 
 interface ShareEntry {
   name: string
@@ -15,6 +15,7 @@ interface ShareEntry {
 const route = useRoute()
 const token = computed(() => String(route.params.token || ''))
 const rootName = ref('共享目录')
+const shareMode = ref<ShareMode>('download')
 const currentPath = ref('')
 const entries = ref<ShareEntry[]>([])
 const offset = ref(0)
@@ -41,6 +42,7 @@ async function loadDirectory(path = '', append = false): Promise<void> {
     const nextOffset = append ? offset.value : 0
     const response = await shareApi.publicDirectoryEntries(token.value, path, nextOffset)
     rootName.value = response.name || '共享目录'
+    shareMode.value = response.mode === 'preview' ? 'preview' : 'download'
     currentPath.value = response.path
     entries.value = append ? [...entries.value, ...response.entries] : response.entries
     offset.value = entries.value.length
@@ -118,7 +120,7 @@ onMounted(() => void loadDirectory(''))
           <div class="folder-copy">
             <p class="eyebrow">共享文件夹</p>
             <h1 id="folder-title">{{ rootName }}</h1>
-            <p class="folder-description">此链接允许查看目录内容并下载文件。</p>
+            <p class="folder-description">{{ shareMode === 'preview' ? '点击文件名可在浏览器中打开，也可以下载文件。' : '此链接允许查看目录内容并下载文件。' }}</p>
           </div>
         </div>
 
@@ -165,6 +167,17 @@ onMounted(() => void loadDirectory(''))
                 <span class="entry-icon folder-icon"><el-icon><Folder /></el-icon></span>
                 <span class="entry-name">{{ entry.name }}</span>
               </button>
+              <a
+                v-else-if="shareMode === 'preview'"
+                class="entry-main file-open"
+                :href="shareApi.publicDirectoryDownloadURL(token, entry.path)"
+                target="_blank"
+                rel="noopener"
+                :aria-label="`在浏览器中打开 ${entry.name}`"
+              >
+                <span class="entry-icon file-icon"><el-icon><Document /></el-icon></span>
+                <span class="entry-name">{{ entry.name }}</span>
+              </a>
               <div v-else class="entry-main">
                 <span class="entry-icon file-icon"><el-icon><Document /></el-icon></span>
                 <span class="entry-name">{{ entry.name }}</span>
@@ -289,7 +302,7 @@ onMounted(() => void loadDirectory(''))
 .crumb-current { overflow: hidden; color: var(--share-ink); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .crumb-separator { color: #9aa7b8; }
 .back-button { display: grid; place-items: center; width: 26px; height: 26px; margin-right: 2px; }
-.back-button:focus-visible, .crumb-link:focus-visible, .entry-open:focus-visible, .download-link:focus-visible, .load-more:focus-visible, .open-hint:focus-visible { outline: 3px solid #7eabf2; outline-offset: 3px; }
+.back-button:focus-visible, .crumb-link:focus-visible, .entry-open:focus-visible, .file-open:focus-visible, .download-link:focus-visible, .load-more:focus-visible, .open-hint:focus-visible { outline: 3px solid #7eabf2; outline-offset: 3px; }
 
 .entry-panel {
   overflow: hidden;
@@ -314,11 +327,12 @@ onMounted(() => void loadDirectory(''))
 .entry-row:hover { background: #f8faff; }
 .entry-main { min-width: 0; display: flex; align-items: center; gap: 12px; }
 .entry-open { width: 100%; border: 0; padding: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.file-open { color: inherit; text-decoration: none; }
 .entry-icon { display: grid; place-items: center; flex: 0 0 auto; width: 30px; height: 30px; border-radius: 8px; font-size: 17px; }
 .folder-icon { color: #bd8a2b; background: #fff5d9; }
 .file-icon { color: #6683a8; background: #eef3fa; }
 .entry-name { overflow: hidden; color: #253750; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.entry-open:hover .entry-name { color: var(--share-blue); }
+.entry-open:hover .entry-name, .file-open:hover .entry-name { color: var(--share-blue); }
 .entry-date, .entry-size { color: var(--share-muted); font-size: 12px; }
 .download-link { display: inline-flex; justify-self: end; align-items: center; gap: 6px; border: 1px solid #d8e4f7; border-radius: 6px; padding: 6px 9px; color: var(--share-blue); background: #f7faff; font-size: 12px; text-decoration: none; }
 .download-link:hover { border-color: #a9c5f2; background: var(--share-blue-soft); }

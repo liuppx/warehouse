@@ -340,12 +340,13 @@ func (h *ShareHandler) HandleDirectoryAccess(w http.ResponseWriter, r *http.Requ
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(struct {
 			Name    string                     `json:"name"`
+			Mode    string                     `json:"mode"`
 			Path    string                     `json:"path"`
 			Entries []service.PublicShareEntry `json:"entries"`
 			Offset  int                        `json:"offset"`
 			Limit   int                        `json:"limit"`
 			HasMore bool                       `json:"hasMore"`
-		}{Name: item.Name, Path: r.URL.Query().Get("path"), Entries: entries, Offset: max(0, offset), Limit: normalizedShareLimit(limit), HasMore: hasMore})
+		}{Name: item.Name, Mode: item.Mode, Path: r.URL.Query().Get("path"), Entries: entries, Offset: max(0, offset), Limit: normalizedShareLimit(limit), HasMore: hasMore})
 	case "download":
 		relativePath := r.URL.Query().Get("path")
 		if relativePath == "" {

@@ -713,10 +713,21 @@ onBeforeUnmount(() => {
           </el-radio-group>
           <div class="share-mode-note">
             <div class="share-group-meta">
-              {{ shareModeOptions.find(item => item.value === shareLinkForm.mode)?.description || '' }}
+              <template v-if="shareLinkTarget?.isDir">
+                {{ shareLinkForm.mode === 'preview'
+                  ? '目录链接始终打开浏览页；点击文件名会在浏览器中打开支持的格式。'
+                  : '目录链接始终打开浏览页；访客需要点击“下载”获取文件。' }}
+              </template>
+              <template v-else>
+                {{ shareModeOptions.find(item => item.value === shareLinkForm.mode)?.description || '' }}
+              </template>
             </div>
             <div class="share-group-meta share-mode-hint">
-              {{ shareModeOptions.find(item => item.value === shareLinkForm.mode)?.hint || '' }}
+              {{ shareLinkTarget?.isDir
+                ? (shareLinkForm.mode === 'preview'
+                  ? '浏览器不支持预览的文件仍可能下载；页面也提供单独的下载按钮。'
+                  : '此设置只影响目录内文件，目录仍可匿名浏览。')
+                : (shareModeOptions.find(item => item.value === shareLinkForm.mode)?.hint || '') }}
             </div>
           </div>
         </div>

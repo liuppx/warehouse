@@ -30,6 +30,9 @@ func TestHandleDirectoryAccessListsAndDownloadsWithoutAuthentication(t *testing.
 	if !strings.Contains(listResponse.Body.String(), `"name":"nested"`) {
 		t.Fatalf("directory listing omitted nested folder: %s", listResponse.Body.String())
 	}
+	if !strings.Contains(listResponse.Body.String(), `"mode":"download"`) {
+		t.Fatalf("directory listing omitted share mode: %s", listResponse.Body.String())
+	}
 
 	downloadRequest := httptest.NewRequest("GET", "/api/v1/public/share/directory/token/download?path=nested%2Freadme.txt", nil)
 	downloadResponse := httptest.NewRecorder()
@@ -39,6 +42,19 @@ func TestHandleDirectoryAccessListsAndDownloadsWithoutAuthentication(t *testing.
 	}
 	if !strings.Contains(downloadResponse.Header().Get("Content-Disposition"), "readme.txt") {
 		t.Fatalf("download filename missing: %q", downloadResponse.Header().Get("Content-Disposition"))
+	}
+
+	item.Mode = share.ModePreview
+	previewList := httptest.NewRecorder()
+	handler.HandleDirectoryAccess(previewList, listRequest)
+	if !strings.Contains(previewList.Body.String(), `"mode":"preview"`) {
+		t.Fatalf("directory listing omitted preview mode: %s", previewList.Body.String())
+	}
+	previewRequest := httptest.NewRequest("GET", "/api/v1/public/share/directory/token/download?path=nested%2Freadme.txt", nil)
+	previewResponse := httptest.NewRecorder()
+	handler.HandleDirectoryAccess(previewResponse, previewRequest)
+	if !strings.HasPrefix(previewResponse.Header().Get("Content-Disposition"), "inline") {
+		t.Fatalf("preview mode should open supported files inline, got %q", previewResponse.Header().Get("Content-Disposition"))
 	}
 	if !item.IsDir || root == "" {
 		t.Fatal("invalid test fixture")

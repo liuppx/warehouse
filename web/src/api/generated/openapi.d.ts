@@ -4224,6 +4224,11 @@ export interface operations {
                     "application/json": {
                         /** @description 分享根目录名称 */
                         name: string;
+                        /**
+                         * @description 文件分享访问方式；preview 表示文件名可在浏览器中打开
+                         * @enum {string}
+                         */
+                        mode: "download" | "preview";
                         /** @description 当前相对目录路径 */
                         path: string;
                         entries: {

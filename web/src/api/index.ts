@@ -405,6 +405,7 @@ export const shareApi = {
     const query = new URLSearchParams({ path, offset: String(offset), limit: String(limit) })
     return request<{
       name: string
+      mode: ShareMode
       path: string
       entries: Array<{ name: string; path: string; isDir: boolean; size: number; modified: string }>
       offset: number

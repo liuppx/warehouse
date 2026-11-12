@@ -1462,9 +1462,10 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [name, path, entries, offset, limit, hasMore]
+                required: [name, mode, path, entries, offset, limit, hasMore]
                 properties:
                   name: {type: string, description: 分享根目录名称}
+                  mode: {type: string, enum: [download, preview], description: 文件分享访问方式；preview 表示文件名可在浏览器中打开}
                   path: {type: string, description: 当前相对目录路径}
                   entries:
                     type: array
