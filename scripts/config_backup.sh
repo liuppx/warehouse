@@ -100,7 +100,8 @@ main() {
 
     local nginx_conf_file=""
     for nginx_conf_file in \
-        "/etc/nginx/conf.d/test-webdv.conf" \
+        "/etc/nginx/conf.d/test-webdav.conf" \
+        "/etc/nginx/conf.d/webdav.conf" \
         "/etc/nginx/conf.d/warehouse.conf"; do
         if [[ -f "$nginx_conf_file" ]]; then
             cp "$nginx_conf_file" "$TMP_DIR/$(basename "$nginx_conf_file")" \
