@@ -34,7 +34,7 @@
 关键目录补充：
 
 - `scripts/local.sh`：本地快速拉起 active / standby 调试实例
-- `scripts/package.sh`：构建前端与后端并生成安装包
+- `scripts/package.sh`：构建并分别生成 `warehouse` service 与 `warehouse-web` static 制品
 - `scripts/starter.sh`：安装包内的服务启停入口
 - `scripts/mount_davfs.sh`：Linux 下通过 `davfs2` 挂载 WebDAV 目录
 

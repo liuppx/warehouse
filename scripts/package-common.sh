@@ -92,11 +92,11 @@ package_archive_source() {
 package_finish_artifact() {
   local type="$1"
   local artifact_json checksum
-  [[ "$type" == service || "$type" == service-with-assets || "$type" == static || "$type" == desktop ]] || package_fail "invalid artifact type: $type"
+  [[ "$type" == service || "$type" == static || "$type" == desktop ]] || package_fail "invalid artifact type: $type"
   [[ -d "$PACKAGE_DIR" ]] || package_fail "package directory is missing: $PACKAGE_DIR"
   find "$PACKAGE_DIR" -type d -name __pycache__ -prune -exec rm -rf {} +
   find "$PACKAGE_DIR" -type f -name '*.pyc' -delete
-  if [[ "$type" == service || "$type" == service-with-assets ]]; then
+  if [[ "$type" == service ]]; then
     for path in scripts/starter.sh scripts/health-check.sh scripts/test.sh; do
       [[ -f "$PACKAGE_DIR/$path" ]] || package_fail "$PACKAGE_UNIT is missing $path"
     done
