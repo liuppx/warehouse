@@ -91,6 +91,8 @@ package_archive_source() {
 
 package_finish_artifact() {
   local type="$1"
+  local service_module="${2:-}"
+  local static_site="${2:-$PACKAGE_UNIT}"
   local artifact_json checksum
   [[ "$type" == service || "$type" == static || "$type" == desktop ]] || package_fail "invalid artifact type: $type"
   [[ -d "$PACKAGE_DIR" ]] || package_fail "package directory is missing: $PACKAGE_DIR"
@@ -106,7 +108,11 @@ package_finish_artifact() {
   else checksum="$(shasum -a 256 "$PACKAGE_STAGE/$PACKAGE_NAME" | awk '{print $1}')"
   fi
   if [[ "$type" == static ]]; then
-    artifact_json="$(jq -cnS --arg unit "$PACKAGE_UNIT" --arg version "$PACKAGE_UNIT_VERSION" --arg package "$PACKAGE_NAME" --arg sha "$checksum" --arg root "$PACKAGE_ROOT_NAME" --arg site "$PACKAGE_UNIT" --arg health "$PACKAGE_HEALTH_PATH" '{unit_id:$unit,type:"static",version:$version,package:$package,sha256:$sha,package_root:$root,static_targets:[{site_id:$site,path:("/opt/deploy/static/"+$site),health_check_path:$health}]}')"
+    [[ "$static_site" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || package_fail 'static artifact requires a valid site ID'
+    artifact_json="$(jq -cnS --arg unit "$PACKAGE_UNIT" --arg version "$PACKAGE_UNIT_VERSION" --arg package "$PACKAGE_NAME" --arg sha "$checksum" --arg root "$PACKAGE_ROOT_NAME" --arg site "$static_site" --arg health "$PACKAGE_HEALTH_PATH" '{unit_id:$unit,type:"static",version:$version,package:$package,sha256:$sha,package_root:$root,static_targets:[{site_id:$site,path:("/opt/deploy/static/"+$site),health_check_path:$health}]}')"
+  elif [[ "$type" == service ]]; then
+    [[ "$service_module" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || package_fail 'service artifact requires a valid deployment module'
+    artifact_json="$(jq -cnS --arg unit "$PACKAGE_UNIT" --arg version "$PACKAGE_UNIT_VERSION" --arg package "$PACKAGE_NAME" --arg sha "$checksum" --arg root "$PACKAGE_ROOT_NAME" --arg module "$service_module" '{unit_id:$unit,type:"service",version:$version,package:$package,sha256:$sha,package_root:$root,service_target:{module:$module,path:("/opt/deploy/"+$module)}}')"
   else
     artifact_json="$(jq -cnS --arg unit "$PACKAGE_UNIT" --arg type "$type" --arg version "$PACKAGE_UNIT_VERSION" --arg package "$PACKAGE_NAME" --arg sha "$checksum" --arg root "$PACKAGE_ROOT_NAME" '{unit_id:$unit,type:$type,version:$version,package:$package,sha256:$sha,package_root:$root}')"
   fi
